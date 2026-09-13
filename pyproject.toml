@@ -5,9 +5,15 @@ description = "Multimodal RAG for visually rich PDFs"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "colpali-engine>=0.3.18",
+    "python-dotenv>=1.0.0",
     "easyocr>=1.7.2",
     "pillow>=12.3.0",
     "pymupdf>=1.28.2",
+    "qdrant-client>=1.19.0",
+    "transformers>=5.17.0",
+    "torch>=2.4.0",
+    "tqdm>=4.66.0",
 ]
 
 [build-system]
