@@ -22,10 +22,8 @@ class TestColQwenEmbedder:
         import torch
         if not torch.cuda.is_available() or torch.cuda.get_device_properties(0).total_memory < 10e9:
             pytest.skip("ColQwen tests need a GPU with >=10 GB VRAM")
-        try:
-            return ColQwenEmbedder()
-        except Exception as e:
-            pytest.skip(f"Could not load ColQwen model: {e}")
+        # No try/except: a load failure on a capable GPU is a real failure, not a skip
+        return ColQwenEmbedder()
     
     def test_embedder_loads_model(self, embedder):
         """Test that model loads successfully."""
