@@ -47,6 +47,13 @@ class QdrantMultivectorStore:
             api_key: Qdrant API key (default: from env)
             collection_name: Name of collection to use
         """
+        self.collection_name = collection_name
+
+        if url == ":memory:":
+            # In-process Qdrant for tests; QdrantClient takes this via location, not url
+            self.client = QdrantClient(location=":memory:")
+            return
+
         # Get from environment if not provided
         url = url or os.getenv('QDRANT_CLUSTER_ENDPOINT')
         api_key = api_key or os.getenv('QDRANT_CLUSTER_API_KEY')
@@ -63,8 +70,6 @@ class QdrantMultivectorStore:
             print(f"Connected to Qdrant cloud: {url}")
         else:
             self.client = QdrantClient(url=url)
-        
-        self.collection_name = collection_name
     
     def create_collection(self, exist_ok: bool = True):
         """
