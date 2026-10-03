@@ -4,10 +4,11 @@ Unified PDF Processing Pipeline.
 Combines rendering, text extraction, and OCR fallback into single workflow.
 """
 
-from typing import List, Optional
+from typing import Iterator, List, Optional
 from dataclasses import dataclass
 from pathlib import Path
 from PIL import Image
+import pymupdf
 
 from .renderer import render_pages
 from .extractor import extract_text, is_text_usable, PageText
@@ -105,6 +106,27 @@ def process_pdf(
     processed_pages.sort(key=lambda p: p.page_num)
     
     return processed_pages
+
+
+def iter_processed_pages(
+    pdf_path: str,
+    dpi: int = 300,
+    chunk_size: int = 32,
+    min_chars: int = 50,
+) -> Iterator[List[ProcessedPage]]:
+    """
+    Yield process_pdf results chunk_size pages at a time.
+    
+    Use this instead of process_pdf for whole documents: a 700-page PDF
+    rendered at once is several GB of page images.
+    ponytail: process_pdf re-extracts text for the whole doc per chunk; cheap vs rendering
+    """
+    with pymupdf.open(pdf_path) as doc:
+        page_count = doc.page_count
+    
+    for start in range(0, page_count, chunk_size):
+        pages = list(range(start, min(start + chunk_size, page_count)))
+        yield process_pdf(pdf_path, dpi=dpi, min_chars=min_chars, pages=pages)
 
 
 def save_processed_page(page: ProcessedPage, output_dir: str, format: str = 'PNG') -> str:

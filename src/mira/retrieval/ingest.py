@@ -2,9 +2,8 @@ from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
 from time import time
-import pymupdf
 
-from mira.pdf import process_pdf
+from mira.pdf import iter_processed_pages
 from .colqwen import ColQwenEmbedder
 from .embeddings import generate_embeddings
 from .qdrant_store import QdrantMultivectorStore
@@ -84,17 +83,13 @@ class DocumentIndexer:
         print(f"{'='*60}\n")
         
         # Render/embed/store in chunks so a 700-page PDF isn't held in RAM at once
-        # ponytail: process_pdf re-extracts text for the whole doc per chunk; cheap vs embedding
-        with pymupdf.open(pdf_path) as doc:
-            page_count = doc.page_count
-        
+        page_count = 0
         total_patches = 0
         text_sources = {}
-        for chunk_start in range(0, page_count, chunk_size):
-            chunk = list(range(chunk_start, min(chunk_start + chunk_size, page_count)))
-            print(f"Pages {chunk[0]}-{chunk[-1]} of {page_count}")
+        for pages in iter_processed_pages(pdf_path, dpi=dpi, chunk_size=chunk_size):
+            print(f"Pages {pages[0].page_num}-{pages[-1].page_num}")
+            page_count += len(pages)
             
-            pages = process_pdf(pdf_path, dpi=dpi, pages=chunk)
             embeddings = generate_embeddings(
                 pages=pages,
                 embedder=self.embedder,
