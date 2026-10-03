@@ -1,18 +1,20 @@
 #!/usr/bin/env python
 """
-Test Phase 1 & 2 with native-text PDFs (skips OCR-heavy ones).
+Phase 1 corpus report: run process_pdf over data/samples and print per-PDF
+page/char/timing stats (skips OCR-heavy PDFs, which are slow on CPU).
+
+Usage: uv run python scripts/phase1_report.py
 """
 
 import sys
 from pathlib import Path
 import time
-from mira.pdf import process_pdf
-from mira.retrieval import QdrantMultivectorStore
+from mira.pdf import iter_processed_pages
 
 
 def main():
     print("="*60)
-    print("Phase 1 & 2 Progress Test")
+    print("Phase 1 Corpus Report")
     print("="*60)
     
     pdf_dir = Path("data/samples")
@@ -35,23 +37,24 @@ def main():
         
         try:
             start = time.time()
-            pages = process_pdf(str(pdf), dpi=150)
+            page_count = native = ocr = chars = 0
+            for pages in iter_processed_pages(str(pdf), dpi=150):
+                page_count += len(pages)
+                native += sum(1 for p in pages if p.text_source == 'native')
+                ocr += sum(1 for p in pages if p.text_source == 'ocr')
+                chars += sum(p.char_count for p in pages)
             duration = time.time() - start
-            
-            native = sum(1 for p in pages if p.text_source == 'native')
-            ocr = sum(1 for p in pages if p.text_source == 'ocr')
-            chars = sum(p.char_count for p in pages)
             
             results.append({
                 'name': pdf.name,
-                'pages': len(pages),
+                'pages': page_count,
                 'native': native,
                 'ocr': ocr,
                 'chars': chars,
                 'time': duration
             })
             
-            print(f"{pdf.name[:50]:50s} | {len(pages):3d}p | {native:3d} native | {chars:7,d} chars | {duration:.1f}s")
+            print(f"{pdf.name[:50]:50s} | {page_count:3d}p | {native:3d} native | {chars:7,d} chars | {duration:.1f}s")
             
         except Exception as e:
             print(f"{pdf.name[:50]:50s} | ERROR: {str(e)[:30]}")
@@ -71,59 +74,6 @@ def main():
     print(f"Total time: {total_time:.1f}s")
     print(f"Average time per PDF: {avg_time:.1f}s")
     print(f"Average time per page: {total_time/total_pages:.2f}s" if total_pages > 0 else "")
-    
-    # Phase 2: Test with Qdrant (no GPU embedding)
-    print("\n" + "="*60)
-    print("Phase 2: Qdrant Connection Test")
-    print("="*60)
-    
-    try:
-        store = QdrantMultivectorStore()
-        
-        # Test connection
-        collections = store.client.get_collections()
-        print(f"✓ Connected to Qdrant cloud")
-        print(f"  Collections: {[c.name for c in collections.collections]}")
-        
-        # Create test collection
-        store.collection_name = "mira_test"
-        store.create_collection(exist_ok=True)
-        info = store.get_collection_info()
-        print(f"✓ Collection 'mira_test' ready")
-        print(f"  Status: {info['status']}")
-        
-    except Exception as e:
-        print(f"✗ Qdrant error: {e}")
-    
-    # Final report
-    print("\n" + "="*60)
-    print("PROGRESS REPORT")
-    print("="*60)
-    print("\n✅ Phase 1: PDF Processing - WORKING")
-    print(f"   - Processed {len(results)} PDFs successfully")
-    print(f"   - {total_pages} pages extracted")
-    print(f"   - {total_chars:,} characters indexed")
-    print(f"   - All native-text PDFs handled")
-    print(f"   - OCR PDFs skipped (need GPU for speed)")
-    
-    print("\n✅ Phase 2: Visual Retrieval - READY")
-    print("   - Qdrant connection: WORKING")
-    print("   - Multivector schema: CONFIGURED")
-    print("   - Embedding generation: REQUIRES GPU")
-    print("   - Cache system: IMPLEMENTED")
-    
-    print("\n⚠️  Limitations (CPU only):")
-    print("   - EasyOCR slow without GPU (27s for 38 pages)")
-    print("   - ColQwen embedding needs GPU (model loading)")
-    print("   - 2 PDFs require OCR (scanned documents)")
-    
-    print("\n📊 Next Steps:")
-    print("   1. Run in Google Colab (free T4 GPU)")
-    print("   2. Test embedding generation with GPU")
-    print("   3. Index all documents to Qdrant")
-    print("   4. Test search queries")
-    
-    print("\n" + "="*60)
 
 
 if __name__ == "__main__":

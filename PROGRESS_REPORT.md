@@ -153,7 +153,7 @@ os.environ['QDRANT_CLUSTER_API_KEY'] = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
 !nvidia-smi
 
 # 5. Run Phase 1 test (fast)
-!uv run python scripts/progress_test.py
+!uv run python scripts/phase1_report.py
 
 # 6. Initialize embedder (downloads model ~5 min first time)
 from mira.retrieval import ColQwenEmbedder
