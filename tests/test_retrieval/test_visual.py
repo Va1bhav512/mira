@@ -18,7 +18,10 @@ class TestColQwenEmbedder:
     @pytest.fixture
     def embedder(self):
         """Create embedder instance."""
-        # Skip if CUDA not available and too slow for CPU
+        # fp16 model needs ~7.5 GB VRAM; on CPU it loads ~12 GB in fp32
+        import torch
+        if not torch.cuda.is_available() or torch.cuda.get_device_properties(0).total_memory < 10e9:
+            pytest.skip("ColQwen tests need a GPU with >=10 GB VRAM")
         try:
             return ColQwenEmbedder()
         except Exception as e:
@@ -124,13 +127,6 @@ class TestEmbeddingGeneration:
         assert patches.shape == (4, 5, 128)
         assert np.array_equal(patches[0, 0], embeddings[3])
         assert np.array_equal(patches[3, 4], embeddings[22])
-
-
-# Skip slow tests unless explicitly requested
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
-    )
 
 
 @pytest.fixture
