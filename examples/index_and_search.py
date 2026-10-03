@@ -9,8 +9,7 @@ Usage:
 import sys
 from pathlib import Path
 
-from mira.retrieval import DocumentIndexer, VisualRetriever
-from mira.retrieval.qdrant_store import QdrantMultivectorStore
+from mira.retrieval import ColQwenEmbedder, DocumentIndexer, QdrantMultivectorStore, VisualRetriever
 
 
 def main(pdf_path: str):
@@ -23,7 +22,10 @@ def main(pdf_path: str):
     
     # Initialize
     print("Initializing Mira Visual Retrieval...")
-    indexer = DocumentIndexer()
+    # One model and one client shared by indexer and retriever; two fp16 copies would OOM a T4
+    embedder = ColQwenEmbedder()
+    store = QdrantMultivectorStore()
+    indexer = DocumentIndexer(embedder=embedder, store=store)
     
     # Setup Qdrant collection
     indexer.setup()
@@ -37,7 +39,6 @@ def main(pdf_path: str):
     )
     
     # Get collection info
-    store = QdrantMultivectorStore()
     info = store.get_collection_info()
     print(f"\nCollection stats: {info}")
     
@@ -46,7 +47,7 @@ def main(pdf_path: str):
     print("SEARCH EXAMPLES")
     print("="*60)
     
-    retriever = VisualRetriever()
+    retriever = VisualRetriever(embedder=embedder, store=store)
     
     queries = [
         "attention mechanism",
