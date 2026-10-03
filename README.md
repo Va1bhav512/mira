@@ -124,7 +124,7 @@ Render Pages        Visual Index        Text Index
 |-------|-------|-------------|--------|
 | 0 | Project setup | Code structure, dependencies, CI | ✅ Complete |
 | 1 | PDF processing | Renderer, text extraction, OCR fallback | ✅ Complete |
-| 2 | Visual indexing | ColQwen embeddings, Qdrant setup | 🔄 Next |
+| 2 | Visual indexing | ColQwen embeddings, Qdrant setup | 🔄 Code done, GPU test pending |
 | 3 | Text indexing | BM25 implementation, native text pipeline | Planned |
 | 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | Planned |
 | 5 | Evidence cropping | Heatmaps, spatial aggregation, hi-res crop | Planned |

@@ -68,14 +68,14 @@
 |-----------|--------|-------|
 | **Qdrant Connection** | ✅ Working | Connected to your cloud cluster |
 | **Collection Schema** | ✅ Configured | Multivector with MaxSim support |
-| **ColQwen Model** | ⚠️ Needs GPU | 4-bit quantization ready |
+| **ColQwen Model** | ⚠️ Needs GPU | fp16 (~7 GB, fits T4) |
 | **Embedding Cache** | ✅ Implemented | Saves to `.cache/embeddings/` |
 | **Batch Processing** | ✅ Ready | Configurable batch size for T4 |
 | **Search Interface** | ✅ Implemented | MaxSim query ready |
 
 ### Qdrant Configuration
 ```
-URL: https://87a1c0ba-36bd-4e40-a475-752d6cba736e.sa-east-1-0.aws.cloud.qdrant.io
+URL: <your QDRANT_CLUSTER_ENDPOINT>
 Collection: mira_test
 Status: green
 Points: 0 (awaiting embedding)
@@ -146,7 +146,7 @@ PageEmbedding(
 
 # 3. Set environment variables
 import os
-os.environ['QDRANT_CLUSTER_ENDPOINT'] = 'https://87a1c0ba-36bd-4e40-a475-752d6cba736e.sa-east-1-0.aws.cloud.qdrant.io'
+os.environ['QDRANT_CLUSTER_ENDPOINT'] = '<your QDRANT_CLUSTER_ENDPOINT>'
 os.environ['QDRANT_CLUSTER_API_KEY'] = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
 
 # 4. Verify GPU
@@ -157,7 +157,7 @@ os.environ['QDRANT_CLUSTER_API_KEY'] = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
 
 # 6. Initialize embedder (downloads model ~5 min first time)
 from mira.retrieval import ColQwenEmbedder
-embedder = ColQwenEmbedder(use_4bit=True)  # Will use GPU
+embedder = ColQwenEmbedder()  # fp16 on GPU
 
 # 7. Index one PDF (test embedding pipeline)
 !uv run python -c "
@@ -226,7 +226,7 @@ for r in results:
 - [ ] Verify embedding cache system
 
 ### With GPU (Colab/Kaggle)
-- [ ] Load ColQwen model (4-bit)
+- [ ] Load ColQwen model (fp16)
 - [ ] Generate embeddings for test documents
 - [ ] Index documents to Qdrant
 - [ ] Test search queries
