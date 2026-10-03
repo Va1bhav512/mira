@@ -176,7 +176,17 @@ uv run pytest tests/ -v
 
 # Run with coverage
 uv run pytest tests/ --cov=mira
+
+# GPU tests + index/search end-to-end on a Colab T4, using your local
+# working tree (needs the colab CLI and Qdrant creds in .env)
+scripts/test_colab.sh            # session "mira"; reused if already running
+colab stop -s mira               # release the VM when done
+
+# Phase 1 stats over every PDF in data/samples (CPU, ~2 min)
+uv run python scripts/phase1_report.py
 ```
+
+ColQwen tests skip locally unless the GPU has >=10 GB VRAM.
 
 ---
 
