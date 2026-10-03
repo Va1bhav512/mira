@@ -107,48 +107,39 @@ class QdrantMultivectorStore:
             print(f"Error creating collection: {e}")
             raise
     
-    def upsert_page(self, page_embedding: PageEmbedding, native_text: str = ""):
+    def upsert_pages(self, page_embeddings: List[PageEmbedding], native_texts: List[str]):
         """
-        Insert or update a page's embeddings.
+        Insert or update pages' embeddings in batched requests.
         
         Args:
-            page_embedding: PageEmbedding object
-            native_text: Extracted text from the page
+            page_embeddings: PageEmbedding objects
+            native_texts: Extracted text for each page, same order
         """
-        # Qdrant only accepts unsigned ints or UUIDs; uuid5 keeps re-indexing idempotent
-        point_id = str(uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"{page_embedding.document_id}/page/{page_embedding.page_num}"
-        ))
+        points = [
+            PointStruct(
+                # Qdrant only accepts unsigned ints or UUIDs; uuid5 keeps re-indexing idempotent
+                id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{emb.document_id}/page/{emb.page_num}")),
+                vector=emb.embeddings.tolist(),
+                payload={
+                    "document_id": emb.document_id,
+                    "page_num": emb.page_num,
+                    "text_source": emb.text_source,
+                    "patch_grid": {"rows": emb.patch_grid[0], "cols": emb.patch_grid[1]},
+                    "image_token_start": emb.image_token_start,
+                    "image_dims": {"width": emb.image_dims[0], "height": emb.image_dims[1]},
+                    "native_text": text[:10000],  # Limit text size
+                },
+            )
+            for emb, text in zip(page_embeddings, native_texts, strict=True)
+        ]
         
-        # Prepare payload
-        payload = {
-            "document_id": page_embedding.document_id,
-            "page_num": page_embedding.page_num,
-            "text_source": page_embedding.text_source,
-            "patch_grid": {
-                "rows": page_embedding.patch_grid[0],
-                "cols": page_embedding.patch_grid[1]
-            },
-            "image_token_start": page_embedding.image_token_start,
-            "image_dims": {
-                "width": page_embedding.image_dims[0],
-                "height": page_embedding.image_dims[1]
-            },
-            "native_text": native_text[:10000],  # Limit text size
-        }
-        
-        # Create point
-        point = PointStruct(
-            id=point_id,
-            vector=page_embedding.embeddings.tolist(),
-            payload=payload
-        )
-        
-        # Upsert
-        self.client.upsert(
+        # ~1-2 MB of JSON per page; 8 per request stays well under Qdrant's 32 MB limit.
+        # wait=True so pages are searchable as soon as this returns.
+        self.client.upload_points(
             collection_name=self.collection_name,
-            points=[point]
+            points=points,
+            batch_size=8,
+            wait=True,
         )
     
     def search(

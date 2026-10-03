@@ -102,8 +102,8 @@ class DocumentIndexer:
                 document_id=document_id,
                 cache_dir=cache_dir
             )
+            self.store.upsert_pages(embeddings, [page.text for page in pages])
             for page_emb, page in zip(embeddings, pages):
-                self.store.upsert_page(page_embedding=page_emb, native_text=page.text)
                 total_patches += page_emb.embeddings.shape[0]
                 text_sources[page.text_source] = text_sources.get(page.text_source, 0) + 1
         

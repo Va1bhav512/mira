@@ -90,7 +90,7 @@ class TestQdrantStore:
         )
         
         # Upsert
-        store.upsert_page(page_emb, native_text="Test content")
+        store.upsert_pages([page_emb], ["Test content"])
         
         # Check count
         info = store.get_collection_info()
