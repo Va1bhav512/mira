@@ -107,8 +107,8 @@ def main():
     print("\nInitializing components...")
     
     try:
-        embedder = ColQwenEmbedder(use_4bit=True)
-        print("✓ ColQwen embedder loaded (4-bit mode)")
+        embedder = ColQwenEmbedder()
+        print("✓ ColQwen embedder loaded (fp16 on GPU)")
     except Exception as e:
         print(f"✗ Failed to load embedder: {e}")
         print("\nNote: GPU required for embedding. Testing Phase 1 only.")

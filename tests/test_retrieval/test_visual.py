@@ -20,7 +20,7 @@ class TestColQwenEmbedder:
         """Create embedder instance."""
         # Skip if CUDA not available and too slow for CPU
         try:
-            return ColQwenEmbedder(use_4bit=True)
+            return ColQwenEmbedder()
         except Exception as e:
             pytest.skip(f"Could not load ColQwen model: {e}")
     
@@ -49,9 +49,11 @@ class TestColQwenEmbedder:
         embeddings = embedder.embed_images(images, batch_size=2)
         
         assert len(embeddings) == 2
-        for emb in embeddings:
+        for emb, (rows, cols), start in embeddings:
             assert emb.shape[1] == 128
-            assert emb.shape[0] > 100  # Many patches
+            assert rows * cols > 100  # Many patches
+            assert start + rows * cols <= emb.shape[0]
+            assert np.abs(emb).sum(axis=1).min() > 0  # no zero padding rows
 
 
 class TestQdrantStore:
@@ -82,6 +84,7 @@ class TestQdrantStore:
             page_num=0,
             embeddings=embedding,
             patch_grid=(10, 10),
+            image_token_start=0,
             image_dims=(1000, 1000),
             text_source="native"
         )
@@ -104,16 +107,23 @@ class TestQdrantStore:
 class TestEmbeddingGeneration:
     """Tests for embedding generation."""
     
-    def test_estimate_patch_grid(self):
-        """Test patch grid estimation."""
-        from mira.retrieval.embeddings import _estimate_patch_grid
+    def test_patch_embeddings_reshape(self):
+        """Image tokens after the prompt prefix reshape into the patch grid."""
+        embeddings = np.arange(30 * 128, dtype=np.float32).reshape(30, 128)
+        page_emb = PageEmbedding(
+            document_id="test_doc",
+            page_num=0,
+            embeddings=embeddings,
+            patch_grid=(4, 5),
+            image_token_start=3,
+            image_dims=(500, 400),
+            text_source="native"
+        )
         
-        # Test with known dimensions
-        grid = _estimate_patch_grid(400, (1000, 1000))
-        
-        assert isinstance(grid, tuple)
-        assert len(grid) == 2
-        assert grid[0] * grid[1] <= 400
+        patches = page_emb.patch_embeddings
+        assert patches.shape == (4, 5, 128)
+        assert np.array_equal(patches[0, 0], embeddings[3])
+        assert np.array_equal(patches[3, 4], embeddings[22])
 
 
 # Skip slow tests unless explicitly requested

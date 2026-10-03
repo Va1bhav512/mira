@@ -80,6 +80,7 @@ def test_page_embedding_dataclass():
             page_num=0,
             embeddings=np.random.randn(100, 128),
             patch_grid=(10, 10),
+            image_token_start=0,
             image_dims=(1000, 1000),
             text_source="native"
         )

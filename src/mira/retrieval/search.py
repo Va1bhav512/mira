@@ -14,6 +14,7 @@ class RetrievalResult:
     native_text: str
     text_source: str
     patch_grid: tuple
+    image_token_start: int
     image_dims: tuple
 
 
@@ -77,6 +78,7 @@ class VisualRetriever:
                     result.payload['patch_grid']['rows'],
                     result.payload['patch_grid']['cols']
                 ),
+                image_token_start=result.payload['image_token_start'],
                 image_dims=(
                     result.payload['image_dims']['width'],
                     result.payload['image_dims']['height']

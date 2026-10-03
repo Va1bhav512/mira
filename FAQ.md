@@ -169,7 +169,7 @@ page_3 → [[128-D], [128-D], ..., [128-D]] → 600 vectors per page
 Schema:
 ```python
 {
-  "id": "attention_paper_page_3",
+  "id": uuid5("attention_paper/page/3"),  # Qdrant IDs must be int or UUID
   "vector": [  # Shape: [num_patches, 128]
     [0.12, -0.34, ...],  # patch_0
     [0.45, 0.23, ...],   # patch_1
@@ -183,7 +183,8 @@ Schema:
     "image_width": 2200,
     "image_height": 3400,
     "native_text": "The dominant...",
-    "patch_grid": {"rows": 42, "cols": 28}
+    "patch_grid": {"rows": 42, "cols": 28},
+    "image_token_start": 4  # vector[4:4+rows*cols] are the image patches
   }
 }
 ```

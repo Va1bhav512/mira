@@ -14,10 +14,18 @@ class PageEmbedding:
     """Embedding data for a single page."""
     document_id: str
     page_num: int
-    embeddings: np.ndarray  # Shape: [num_patches, 128]
-    patch_grid: Tuple[int, int]  # (rows, cols)
+    embeddings: np.ndarray  # Shape: [num_tokens, 128]
+    patch_grid: Tuple[int, int]  # (rows, cols) of image tokens
+    image_token_start: int  # embeddings[start:start+rows*cols] is the patch grid
     image_dims: Tuple[int, int]  # (width, height)
     text_source: str
+
+    @property
+    def patch_embeddings(self) -> np.ndarray:
+        """Image-token embeddings shaped [rows, cols, 128], for heatmaps."""
+        rows, cols = self.patch_grid
+        start = self.image_token_start
+        return self.embeddings[start:start + rows * cols].reshape(rows, cols, -1)
 
 
 def generate_embeddings(
@@ -29,141 +37,87 @@ def generate_embeddings(
 ) -> List[PageEmbedding]:
     """
     Generate embeddings for processed pages.
-    
+
     Args:
         pages: List of ProcessedPage from Phase 1
         embedder: ColQwen model wrapper
         batch_size: Pages to process together (GPU memory limit)
         document_id: Document identifier
-        cache_dir: Optional cache directory to avoid recomputation
-    
+        cache_dir: Optional cache directory to avoid recomputation (per page)
+
     Returns:
-        List of PageEmbedding objects
+        List of PageEmbedding objects, in the same order as pages
     """
-    if not pages:
-        return []
-    
-    # Check cache
-    if cache_dir:
-        cache_path = Path(cache_dir) / document_id
-        cache_path.mkdir(parents=True, exist_ok=True)
-        
-        cached = _load_from_cache(cache_path, len(pages))
+    cache_path = Path(cache_dir) / document_id if cache_dir else None
+
+    results = {}
+    to_embed = []
+    for page in pages:
+        cached = _load_from_cache(cache_path, page.page_num) if cache_path else None
         if cached:
-            print(f"Loaded {len(cached)} embeddings from cache")
-            return cached
-    
-    # Generate embeddings
-    images = [page.image for page in pages]
-    
-    print(f"Generating embeddings for {len(pages)} pages...")
-    
-    # Process in batches
-    all_embeddings = []
-    
-    for i in tqdm(range(0, len(images), batch_size), desc="Embedding pages"):
-        batch_images = images[i:i + batch_size]
-        batch_pages = pages[i:i + batch_size]
-        
-        # Embed batch
-        batch_emb = embedder.embed_images(batch_images, batch_size=len(batch_images))
-        
-        # Create PageEmbedding objects
-        for j, (emb, page) in enumerate(zip(batch_emb, batch_pages)):
-            # Estimate patch grid from embedding shape
-            num_patches = emb.shape[0]
-            patch_grid = _estimate_patch_grid(num_patches, page.image.size)
-            
-            all_embeddings.append(PageEmbedding(
+            results[page.page_num] = cached
+        else:
+            to_embed.append(page)
+
+    if len(results):
+        print(f"Loaded {len(results)} embeddings from cache")
+
+    for i in tqdm(range(0, len(to_embed), batch_size), desc="Embedding pages", disable=not to_embed):
+        batch_pages = to_embed[i:i + batch_size]
+        batch_emb = embedder.embed_images([p.image for p in batch_pages], batch_size=len(batch_pages))
+
+        for (emb, patch_grid, image_token_start), page in zip(batch_emb, batch_pages):
+            page_emb = PageEmbedding(
                 document_id=document_id,
                 page_num=page.page_num,
                 embeddings=emb,
                 patch_grid=patch_grid,
+                image_token_start=image_token_start,
                 image_dims=page.image.size,
                 text_source=page.text_source
-            ))
-    
-    # Save to cache
-    if cache_dir:
-        _save_to_cache(cache_path, all_embeddings)
-    
-    return all_embeddings
+            )
+            results[page.page_num] = page_emb
+            if cache_path:
+                _save_to_cache(cache_path, page_emb)
+
+    return [results[p.page_num] for p in pages]
 
 
-def _estimate_patch_grid(num_patches: int, image_size: Tuple[int, int]) -> Tuple[int, int]:
-    """
-    Estimate patch grid dimensions from embedding count and image size.
-    
-    Args:
-        num_patches: Number of patch embeddings
-        image_size: (width, height) of image
-    
-    Returns:
-        (rows, cols) grid dimensions
-    """
-    width, height = image_size
-    
-    #_aspect ratio
-    aspect = width / height
-    
-    # Estimate grid (ColQwen uses 14x14 pixel patches typically)
-    # Total patches = rows * cols
-    # rows = cols / aspect
-    
-    import math
-    cols = int(math.sqrt(num_patches * aspect))
-    rows = int(num_patches / cols)
-    
-    return (rows, cols)
+def _save_to_cache(cache_path: Path, emb: PageEmbedding):
+    """Save one page's embedding to cache."""
+    cache_path.mkdir(parents=True, exist_ok=True)
+    np.save(cache_path / f"page_{emb.page_num:04d}.npy", emb.embeddings)
+    with open(cache_path / f"page_{emb.page_num:04d}_meta.json", 'w') as f:
+        json.dump({
+            'document_id': emb.document_id,
+            'page_num': emb.page_num,
+            'patch_grid': emb.patch_grid,
+            'image_token_start': emb.image_token_start,
+            'image_dims': emb.image_dims,
+            'text_source': emb.text_source,
+        }, f)
 
 
-def _save_to_cache(cache_path: Path, embeddings: List[PageEmbedding]):
-    """Save embeddings to cache."""
-    for emb in embeddings:
-        # Save embeddings as numpy
-        emb_path = cache_path / f"page_{emb.page_num:04d}.npy"
-        np.save(emb_path, emb.embeddings)
-        
-        # Save metadata as JSON
-        meta_path = cache_path / f"page_{emb.page_num:04d}_meta.json"
-        with open(meta_path, 'w') as f:
-            json.dump({
-                'document_id': emb.document_id,
-                'page_num': emb.page_num,
-                'patch_grid': emb.patch_grid,
-                'image_dims': emb.image_dims,
-                'text_source': emb.text_source,
-                'embedding_shape': emb.embeddings.shape
-            }, f)
-    
-    print(f"Cached {len(embeddings)} embeddings to {cache_path}")
+def _load_from_cache(cache_path: Path, page_num: int) -> Optional[PageEmbedding]:
+    """Load one page's embedding from cache if available."""
+    emb_path = cache_path / f"page_{page_num:04d}.npy"
+    meta_path = cache_path / f"page_{page_num:04d}_meta.json"
+    if not emb_path.exists() or not meta_path.exists():
+        return None
 
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
 
-def _load_from_cache(cache_path: Path, expected_pages: int) -> Optional[List[PageEmbedding]]:
-    """Load embeddings from cache if available."""
-    embeddings = []
-    
-    for page_num in range(expected_pages):
-        emb_path = cache_path / f"page_{page_num:04d}.npy"
-        meta_path = cache_path / f"page_{page_num:04d}_meta.json"
-        
-        if not emb_path.exists() or not meta_path.exists():
-            return None
-        
-        # Load embedding
-        emb_data = np.load(emb_path)
-        
-        # Load metadata
-        with open(meta_path, 'r') as f:
-            meta = json.load(f)
-        
-        embeddings.append(PageEmbedding(
-            document_id=meta['document_id'],
-            page_num=meta['page_num'],
-            embeddings=emb_data,
-            patch_grid=tuple(meta['patch_grid']),
-            image_dims=tuple(meta['image_dims']),
-            text_source=meta['text_source']
-        ))
-    
-    return embeddings
+    # Caches written before image_token_start existed have a guessed grid
+    if 'image_token_start' not in meta:
+        return None
+
+    return PageEmbedding(
+        document_id=meta['document_id'],
+        page_num=meta['page_num'],
+        embeddings=np.load(emb_path),
+        patch_grid=tuple(meta['patch_grid']),
+        image_token_start=meta['image_token_start'],
+        image_dims=tuple(meta['image_dims']),
+        text_source=meta['text_source']
+    )

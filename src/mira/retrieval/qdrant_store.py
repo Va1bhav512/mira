@@ -125,6 +125,7 @@ class QdrantMultivectorStore:
                 "rows": page_embedding.patch_grid[0],
                 "cols": page_embedding.patch_grid[1]
             },
+            "image_token_start": page_embedding.image_token_start,
             "image_dims": {
                 "width": page_embedding.image_dims[0],
                 "height": page_embedding.image_dims[1]

@@ -1,6 +1,6 @@
 from PIL import Image
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import torch
 from colpali_engine.models import ColQwen2_5, ColQwen2_5_Processor
 
@@ -8,121 +8,115 @@ from colpali_engine.models import ColQwen2_5, ColQwen2_5_Processor
 class ColQwenEmbedder:
     """
     Wrapper for ColQwen2.5 visual embedding model.
-    Optimized for free-tier GPUs (T4, Colab/Kaggle).
+    Runs in fp16 on GPU (~7 GB for the 3B model, fits a T4) and fp32 on CPU.
     """
-    
+
     def __init__(
         self,
         model_name: str = "vidore/colqwen2.5-v0.2",
         device: Optional[str] = None,
-        use_4bit: bool = True
     ):
         """
         Initialize ColQwen embedder.
-        
+
         Args:
             model_name: HuggingFace model name
             device: Device to use ('cuda', 'cpu', None=auto)
-            use_4bit: Use 4-bit quantization for memory efficiency
         """
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         self.device = device
-        
-        # Load model with memory optimizations
-        if use_4bit and device == "cuda":
-            from transformers import BitsAndBytesConfig
-            
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-            )
-            self.model = ColQwen2_5.from_pretrained(
-                model_name,
-                quantization_config=bnb_config,
-                device_map="auto"
-            )
-        else:
-            self.model = ColQwen2_5.from_pretrained(model_name)
-            self.model = self.model.to(device)
-        
+
+        # T4 has no bf16 support, so fp16 on GPU
+        dtype = torch.float16 if device == "cuda" else torch.float32
+        self.model = ColQwen2_5.from_pretrained(model_name, dtype=dtype).to(device)
         self.model.eval()
         self.processor = ColQwen2_5_Processor.from_pretrained(model_name)
-    
+
     def embed_images(
         self,
         images: List[Image.Image],
         batch_size: int = 4
-    ) -> List[np.ndarray]:
+    ) -> List[Tuple[np.ndarray, Tuple[int, int], int]]:
         """
         Embed batch of page images into patch embeddings.
-        
+
         Args:
             images: List of PIL Images
             batch_size: Batch size for processing (GPU memory limit)
-        
+
         Returns:
-            List of embeddings, each shape [num_patches, 128]
+            One (embeddings, patch_grid, image_token_start) tuple per image:
+            - embeddings: [num_tokens, 128], padding removed. Includes the
+              prompt's text tokens, which ColQwen also scores with.
+            - patch_grid: (rows, cols) of the image tokens
+            - image_token_start: row index where the image tokens begin, so
+              embeddings[start:start + rows*cols] reshapes to the grid
         """
-        all_embeddings = []
-        
+        merge = self.model.spatial_merge_size
+        image_token_id = self.model.config.image_token_id
+        results = []
+
         # Process in batches to avoid OOM
         for i in range(0, len(images), batch_size):
             batch = images[i:i + batch_size]
-            
-            # Process images
-            inputs = self.processor.process_images(batch)
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            
-            # Generate embeddings
+
+            inputs = self.processor.process_images(batch).to(self.device)
+
             with torch.no_grad():
                 embeddings = self.model(**inputs)
-            
-            # Convert to numpy
-            for emb in embeddings:
-                all_embeddings.append(emb.cpu().numpy())
-            
-            # Clear cache
+
+            for emb, mask, ids, (_, h, w) in zip(
+                embeddings, inputs["attention_mask"], inputs["input_ids"], inputs["image_grid_thw"]
+            ):
+                # Drop left padding; padded rows are zero vectors
+                keep = mask.bool()
+                emb, ids = emb[keep], ids[keep]
+
+                rows, cols = int(h) // merge, int(w) // merge
+                image_positions = (ids == image_token_id).nonzero().flatten()
+                assert len(image_positions) == rows * cols, "image tokens don't match grid"
+
+                results.append((
+                    emb.float().cpu().numpy(),
+                    (rows, cols),
+                    int(image_positions[0]),
+                ))
+
             if self.device == "cuda":
                 torch.cuda.empty_cache()
-        
-        return all_embeddings
-    
+
+        return results
+
     def embed_query(self, query: str) -> np.ndarray:
         """
         Embed text query into token embeddings.
-        
+
         Args:
             query: Text query
-        
+
         Returns:
             Query token embeddings, shape [num_tokens, 128]
         """
-        inputs = self.processor.process_queries([query])
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        with torch.no_grad():
-            embeddings = self.model(**inputs)
-        
-        return embeddings[0].cpu().numpy()
-    
+        return self.embed_queries([query])[0]
+
     def embed_queries(self, queries: List[str]) -> List[np.ndarray]:
         """
         Embed multiple queries.
-        
+
         Args:
             queries: List of text queries
-        
+
         Returns:
-            List of query embeddings
+            List of query embeddings, padding removed
         """
-        inputs = self.processor.process_queries(queries)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
+        inputs = self.processor.process_queries(queries).to(self.device)
+
         with torch.no_grad():
             embeddings = self.model(**inputs)
-        
-        return [emb.cpu().numpy() for emb in embeddings]
 
+        return [
+            emb[mask.bool()].float().cpu().numpy()
+            for emb, mask in zip(embeddings, inputs["attention_mask"])
+        ]
