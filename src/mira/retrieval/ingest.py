@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
 from time import time
+import pymupdf
 
-from mira.pdf import process_pdf, ProcessedPage
+from mira.pdf import process_pdf
 from .colqwen import ColQwenEmbedder
-from .embeddings import generate_embeddings, PageEmbedding
+from .embeddings import generate_embeddings
 from .qdrant_store import QdrantMultivectorStore
 
 
@@ -54,7 +55,8 @@ class DocumentIndexer:
         document_id: Optional[str] = None,
         dpi: int = 150,
         batch_size: int = 4,
-        cache_dir: Optional[str] = None
+        cache_dir: Optional[str] = None,
+        chunk_size: int = 32
     ) -> IndexingResult:
         """
         Full pipeline: PDF → Process → Embed → Store.
@@ -65,6 +67,7 @@ class DocumentIndexer:
             dpi: Rendering resolution (lower for faster processing)
             batch_size: Batch size for embedding
             cache_dir: Optional cache directory
+            chunk_size: Pages rendered and held in memory at once
         
         Returns:
             IndexingResult with stats
@@ -80,43 +83,35 @@ class DocumentIndexer:
         print(f"Document ID: {document_id}")
         print(f"{'='*60}\n")
         
-        # Step 1: Process PDF (Phase 1)
-        print("Step 1: Processing PDF...")
-        pages = process_pdf(pdf_path, dpi=dpi)
-        print(f"  → Processed {len(pages)} pages")
+        # Render/embed/store in chunks so a 700-page PDF isn't held in RAM at once
+        # ponytail: process_pdf re-extracts text for the whole doc per chunk; cheap vs embedding
+        with pymupdf.open(pdf_path) as doc:
+            page_count = doc.page_count
         
-        # Step 2: Generate embeddings
-        print("\nStep 2: Generating embeddings...")
-        embeddings = generate_embeddings(
-            pages=pages,
-            embedder=self.embedder,
-            batch_size=batch_size,
-            document_id=document_id,
-            cache_dir=cache_dir
-        )
-        print(f"  → Generated {len(embeddings)} page embeddings")
-        
-        # Step 3: Store in Qdrant
-        print("\nStep 3: Storing in Qdrant...")
-        for page_emb, page in zip(embeddings, pages):
-            self.store.upsert_page(
-                page_embedding=page_emb,
-                native_text=page.text
-            )
-        print(f"  → Stored {len(embeddings)} pages in Qdrant")
-        
-        # Calculate stats
-        duration = time() - start_time
-        total_patches = sum(e.embeddings.shape[0] for e in embeddings)
-        
-        # Text source distribution
+        total_patches = 0
         text_sources = {}
-        for page in pages:
-            text_sources[page.text_source] = text_sources.get(page.text_source, 0) + 1
+        for chunk_start in range(0, page_count, chunk_size):
+            chunk = list(range(chunk_start, min(chunk_start + chunk_size, page_count)))
+            print(f"Pages {chunk[0]}-{chunk[-1]} of {page_count}")
+            
+            pages = process_pdf(pdf_path, dpi=dpi, pages=chunk)
+            embeddings = generate_embeddings(
+                pages=pages,
+                embedder=self.embedder,
+                batch_size=batch_size,
+                document_id=document_id,
+                cache_dir=cache_dir
+            )
+            for page_emb, page in zip(embeddings, pages):
+                self.store.upsert_page(page_embedding=page_emb, native_text=page.text)
+                total_patches += page_emb.embeddings.shape[0]
+                text_sources[page.text_source] = text_sources.get(page.text_source, 0) + 1
+        
+        duration = time() - start_time
         
         result = IndexingResult(
             document_id=document_id,
-            pages_indexed=len(pages),
+            pages_indexed=page_count,
             total_patches=total_patches,
             duration_seconds=duration,
             text_source_distribution=text_sources
