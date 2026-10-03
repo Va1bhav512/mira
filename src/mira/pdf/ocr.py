@@ -1,3 +1,4 @@
+from functools import cache
 from typing import List, Tuple
 from dataclasses import dataclass
 from PIL import Image
@@ -17,6 +18,12 @@ class OCRResult:
     source: str = "ocr"
 
 
+@cache
+def _get_reader(languages: Tuple[str, ...]) -> easyocr.Reader:
+    """Load an EasyOCR reader once per language set (~1 GB, several seconds)."""
+    return easyocr.Reader(list(languages), gpu=True)
+
+
 def ocr_page(image: Image.Image, reader: easyocr.Reader = None, languages: List[str] = None) -> str:
     """
     Perform OCR on a single page image.
@@ -33,7 +40,7 @@ def ocr_page(image: Image.Image, reader: easyocr.Reader = None, languages: List[
         languages = ['en']
     
     if reader is None:
-        reader = easyocr.Reader(languages, gpu=True)
+        reader = _get_reader(tuple(languages))
     
     img_array = np.array(image)
     results = reader.readtext(img_array, detail=0, paragraph=True)
@@ -60,7 +67,7 @@ def ocr_fallback(
     if languages is None:
         languages = ['en']
     
-    reader = easyocr.Reader(languages, gpu=True)
+    reader = _get_reader(tuple(languages))
     pages_text = []
     
     for page_num, image in pages:
