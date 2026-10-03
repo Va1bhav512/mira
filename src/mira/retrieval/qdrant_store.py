@@ -11,6 +11,7 @@ from qdrant_client.models import (
 )
 from typing import List, Optional, Dict, Any
 import os
+import uuid
 from dotenv import load_dotenv
 import numpy as np
 from dataclasses import dataclass
@@ -109,8 +110,11 @@ class QdrantMultivectorStore:
             page_embedding: PageEmbedding object
             native_text: Extracted text from the page
         """
-        # Create point ID
-        point_id = f"{page_embedding.document_id}_page_{page_embedding.page_num}"
+        # Qdrant only accepts unsigned ints or UUIDs; uuid5 keeps re-indexing idempotent
+        point_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{page_embedding.document_id}/page/{page_embedding.page_num}"
+        ))
         
         # Prepare payload
         payload = {
