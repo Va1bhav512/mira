@@ -667,6 +667,20 @@ Each of these broke a real run on a Colab T4 (15 GB VRAM, 12 GB RAM, no swap):
 | Eval `Killed`, and the log silently stops | Qdrant's embedded `path=` mode unpickles every point into RAM; the 2,674-page index is a 2.2 GB sqlite file | Embedded mode removed; `test_colab.sh --eval` runs a Qdrant server binary on the VM |
 | Upload fails with SSL EOF, then "session not found" | Free-tier VMs get reclaimed after a few hours, losing everything under `/content` | `test_colab.sh --eval` downloads the embedding cache (~500 MB, fp16) to `.cache/colab/` after indexing and re-uploads it next run: ~20 min instead of ~1 h |
 
+### Where does the time go in a full-corpus eval run?
+
+Measured on a Colab T4 (`data/eval/colab_eval.log`):
+
+| Step | Time | Notes |
+|------|------|-------|
+| pip install + pytest | ~5 min | pytest alone is 4 min, mostly loading ColQwen for the GPU tests |
+| ColQwen page embedding | **~1.1–1.3 s/page**, ~50–55 min for 2,674 pages | ~750 image tokens per page through a 3B model on a T4 in fp16. Dominates everything |
+| bf16 retries | 6× slower per affected page | Only NaN pages; mostly on the scanned NASA report |
+| Render + text/OCR | small on digital PDFs; slow on scans | Still runs for cached pages, because BM25 needs the text |
+| Eval (47 queries × 4 modes) | minutes, not timed | Query embedding + exact MaxSim over 2,674 pages + BM25 |
+
+Embedding is a one-off cost per corpus. With the checkpoint, a rerun skips it. Changing fusion or eval code never needs re-embedding.
+
 ### Qdrant multivector search is slow. What to do?
 
 Check:
