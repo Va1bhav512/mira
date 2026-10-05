@@ -87,7 +87,9 @@ def generate_embeddings(
 def _save_to_cache(cache_path: Path, emb: PageEmbedding):
     """Save one page's embedding to cache."""
     cache_path.mkdir(parents=True, exist_ok=True)
-    np.save(cache_path / f"page_{emb.page_num:04d}.npy", emb.embeddings)
+    # fp16 halves the cache (~500 MB for the sample corpus, so it can be checkpointed off Colab).
+    # Lossless for fp16-model outputs; bf16-fallback pages lose only sub-1e-4 detail.
+    np.save(cache_path / f"page_{emb.page_num:04d}.npy", emb.embeddings.astype(np.float16))
     with open(cache_path / f"page_{emb.page_num:04d}_meta.json", 'w') as f:
         json.dump({
             'document_id': emb.document_id,
@@ -114,7 +116,7 @@ def _load_from_cache(cache_path: Path, page_num: int) -> Optional[PageEmbedding]
         return None
 
     # Caches written before the bf16 NaN fallback can hold fp16-overflowed pages
-    embeddings = np.load(emb_path)
+    embeddings = np.load(emb_path).astype(np.float32)
     if np.isnan(embeddings).any():
         return None
 

@@ -180,6 +180,17 @@ class TestEmbeddingGeneration:
         assert np.array_equal(patches[0, 0], embeddings[3])
         assert np.array_equal(patches[3, 4], embeddings[22])
     
+    def test_cache_round_trip_is_lossless_for_fp16_outputs(self, tmp_path):
+        """Cache stores fp16; embeddings from the fp16 model must come back exactly, as float32."""
+        from mira.retrieval.embeddings import _load_from_cache, _save_to_cache
+        rng = np.random.default_rng(0)
+        emb = rng.standard_normal((5, 128)).astype(np.float16).astype(np.float32)
+        _save_to_cache(tmp_path, PageEmbedding("d", 0, emb, (2, 2), 1, (10, 10), "native"))
+
+        loaded = _load_from_cache(tmp_path, 0)
+        assert loaded.embeddings.dtype == np.float32
+        assert np.array_equal(loaded.embeddings, emb)
+
     def test_cache_rejects_nan_embeddings(self, tmp_path):
         """A page cached before the NaN fallback existed must be recomputed, not reused."""
         from mira.retrieval.embeddings import _load_from_cache, _save_to_cache
