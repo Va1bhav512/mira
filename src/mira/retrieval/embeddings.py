@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 from pathlib import Path
 import json
-from tqdm import tqdm
 
 from mira.pdf import ProcessedPage
 from .colqwen import ColQwenEmbedder
@@ -62,11 +61,13 @@ def generate_embeddings(
     if len(results):
         print(f"Loaded {len(results)} embeddings from cache")
 
-    for i in tqdm(range(0, len(to_embed), batch_size), desc="Embedding pages", disable=not to_embed):
-        batch_pages = to_embed[i:i + batch_size]
-        batch_emb = embedder.embed_images([p.image for p in batch_pages], batch_size=len(batch_pages))
+    # One call for all uncached pages: embed_images batches internally, and its bf16
+    # NaN fallback then reloads the model at most once per call instead of once per batch
+    if to_embed:
+        print(f"Embedding {len(to_embed)} pages")
+        embedded = embedder.embed_images([p.image for p in to_embed], batch_size=batch_size)
 
-        for (emb, patch_grid, image_token_start), page in zip(batch_emb, batch_pages):
+        for (emb, patch_grid, image_token_start), page in zip(embedded, to_embed, strict=True):
             page_emb = PageEmbedding(
                 document_id=document_id,
                 page_num=page.page_num,
