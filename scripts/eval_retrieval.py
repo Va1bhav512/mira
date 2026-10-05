@@ -5,7 +5,7 @@ Compare retrieval modes (adaptive / fixed / visual / lexical) on labelled querie
 Usage:
     uv run python scripts/eval_retrieval.py                    # all modes (needs GPU + indexed corpus)
     uv run python scripts/eval_retrieval.py --modes lexical    # CPU only
-    uv run python scripts/eval_retrieval.py --qdrant-path /content/cache/qdrant --bm25-path /content/cache/bm25
+    uv run python scripts/eval_retrieval.py --qdrant-url http://localhost:6333 --bm25-path /content/cache/bm25
 
 Query file: one JSON object per line,
     {"query": "...", "document_id": "DS_stm32f401re", "pages": [12], "type": "identifier"}
@@ -34,7 +34,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--queries", default="data/eval/queries.jsonl")
     parser.add_argument("--modes", nargs="+", default=list(MODES), choices=MODES)
-    parser.add_argument("--qdrant-path", help="On-disk embedded Qdrant (default: cloud from .env)")
+    parser.add_argument("--qdrant-url", help="Qdrant server URL (default: cloud cluster from .env)")
     parser.add_argument("--bm25-path", default=".cache/bm25")
     args = parser.parse_args()
 
@@ -42,7 +42,7 @@ def main():
         queries = [json.loads(line) for line in f if line.strip()]
 
     retriever = HybridRetriever(
-        store=QdrantMultivectorStore(path=args.qdrant_path),
+        store=QdrantMultivectorStore(url=args.qdrant_url),
         text_index=BM25Index(args.bm25_path),
     )
 

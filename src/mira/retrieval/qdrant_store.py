@@ -7,7 +7,8 @@ from qdrant_client.models import (
     PointStruct,
     Filter,
     FieldCondition,
-    MatchValue
+    MatchValue,
+    SearchParams
 )
 from typing import List, Optional, Dict, Any
 import os
@@ -37,35 +38,32 @@ class QdrantMultivectorStore:
         self,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
-        collection_name: str = "mira_pages",
-        path: Optional[str] = None
+        collection_name: str = "mira_pages"
     ):
         """
         Initialize Qdrant client.
-        
+
         Args:
-            url: Qdrant cluster URL (default: from env)
-            api_key: Qdrant API key (default: from env)
+            url: Qdrant URL, or ":memory:" for an in-process store in tests
+                (default: QDRANT_CLUSTER_ENDPOINT from env)
+            api_key: Qdrant API key (default: from env, only when url is too)
             collection_name: Name of collection to use
-            path: Directory for an embedded on-disk Qdrant (no server, no network);
-                takes precedence over url
+
+        No embedded on-disk mode: it unpickles every point into RAM and got OOM-killed
+        opening 2,674 pages on a 12 GB VM. Run a Qdrant server instead.
         """
         self.collection_name = collection_name
-
-        if path:
-            # ponytail: embedded mode is brute-force (~1.3 s/query at 2.7k pages); fine for eval runs
-            self.client = QdrantClient(path=path)
-            return
 
         if url == ":memory:":
             # In-process Qdrant for tests; QdrantClient takes this via location, not url
             self.client = QdrantClient(location=":memory:")
             return
 
-        # Get from environment if not provided
-        url = url or os.getenv('QDRANT_CLUSTER_ENDPOINT')
-        api_key = api_key or os.getenv('QDRANT_CLUSTER_API_KEY')
-        
+        # The env API key belongs to the env cluster; never send it to an explicitly given url
+        if url is None:
+            url = os.getenv('QDRANT_CLUSTER_ENDPOINT')
+            api_key = api_key or os.getenv('QDRANT_CLUSTER_API_KEY')
+
         if not url:
             # Fallback to local Qdrant
             url = "http://localhost:6333"
@@ -184,7 +182,10 @@ class QdrantMultivectorStore:
             collection_name=self.collection_name,
             query=query_embedding.tolist(),
             limit=top_k,
-            query_filter=query_filter
+            query_filter=query_filter,
+            # Exact MaxSim over every page, not HNSW-approximate.
+            # ponytail: full scan, fine at a few thousand pages; HNSW/coarse stage if it grows 100x
+            search_params=SearchParams(exact=True)
         )
         
         # Convert to SearchResult
