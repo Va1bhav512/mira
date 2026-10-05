@@ -18,4 +18,5 @@ embeddings_cache/
 
 # Project-specific
 initial_instructions.txt
-data/
+# Third-party PDFs: 72 MB and not ours to redistribute. data/eval/ etc. are tracked.
+data/samples/
