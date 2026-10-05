@@ -124,8 +124,8 @@ Render Pages        Visual Index        Text Index
 |-------|-------|-------------|--------|
 | 0 | Project setup | Code structure, dependencies, CI | ✅ Complete |
 | 1 | PDF processing | Renderer, text extraction, OCR fallback | ✅ Complete |
-| 2 | Visual indexing | ColQwen embeddings, Qdrant setup | 🔄 Code done, GPU test pending |
-| 3 | Text indexing | BM25 implementation, native text pipeline | Planned |
+| 2 | Visual indexing | ColQwen embeddings, Qdrant setup | ✅ Complete (verified on Colab T4) |
+| 3 | Text indexing | BM25 implementation, native text pipeline | ✅ Complete |
 | 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | Planned |
 | 5 | Evidence cropping | Heatmaps, spatial aggregation, hi-res crop | Planned |
 | 6 | Generation | VLM serving, citations, API | Planned |
@@ -166,6 +166,21 @@ for page in pages:
     
     # Save page image
     page.image.save(f"output/page_{page.page_num}.png")
+```
+
+### Index and search (Phases 2-3)
+
+```python
+from mira.retrieval import BM25Index, DocumentIndexer, VisualRetriever
+
+# Visual embeddings -> Qdrant, page text -> BM25 (.cache/bm25/pages.jsonl). Needs a GPU.
+indexer = DocumentIndexer()
+indexer.setup()
+indexer.index_document("data/samples/DS_stm32f401re.pdf")
+
+# Exact-term search (CPU only; identifiers like 0x2D or VDD_IO are kept whole)
+for r in BM25Index().search("STM32F401RE flash size", top_k=5):
+    print(r.document_id, r.page_num, r.score)
 ```
 
 ### Run Tests
