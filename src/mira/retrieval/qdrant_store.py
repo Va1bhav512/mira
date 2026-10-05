@@ -37,7 +37,8 @@ class QdrantMultivectorStore:
         self,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
-        collection_name: str = "mira_pages"
+        collection_name: str = "mira_pages",
+        path: Optional[str] = None
     ):
         """
         Initialize Qdrant client.
@@ -46,8 +47,15 @@ class QdrantMultivectorStore:
             url: Qdrant cluster URL (default: from env)
             api_key: Qdrant API key (default: from env)
             collection_name: Name of collection to use
+            path: Directory for an embedded on-disk Qdrant (no server, no network);
+                takes precedence over url
         """
         self.collection_name = collection_name
+
+        if path:
+            # ponytail: embedded mode is brute-force (~1.3 s/query at 2.7k pages); fine for eval runs
+            self.client = QdrantClient(path=path)
+            return
 
         if url == ":memory:":
             # In-process Qdrant for tests; QdrantClient takes this via location, not url
