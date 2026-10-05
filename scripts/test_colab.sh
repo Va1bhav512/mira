@@ -38,10 +38,8 @@ if (( EVAL )) && [[ -f $CHECKPOINT ]]; then
   colab upload -s "$S" "$CHECKPOINT" /content/embeddings.tar
 fi
 
-# The kernel is long-lived and won't see a fresh `pip install -e`, and subprocess
-# output bypasses it, so everything runs as subprocesses with output relayed.
-# Shared by both stages: the kernel keeps run() defined between colab exec calls,
-# but each stage file redefines it so either can run on its own.
+# Each stage runs as its own detached process on the VM (see remote_stage), so a fresh
+# `pip install -e` is visible to the steps after it. Shared helpers for both stages:
 cat > "$tmp/common.py" <<'PY'
 import os, subprocess, sys
 
@@ -94,20 +92,48 @@ print("\nALL PASSED")
 PY
 } > "$tmp/stage2.py"
 
-# MIRA_EVAL is always passed: kernel env persists, so a stale "1" would leak into a later plain run
-colab exec -s "$S" -f "$tmp/stage1.py" --timeout $(( EVAL ? 14400 : 3600 )) \
-  --env MIRA_EVAL="$EVAL" \
-  --env QDRANT_CLUSTER_ENDPOINT="$QDRANT_CLUSTER_ENDPOINT" \
-  --env QDRANT_CLUSTER_API_KEY="$QDRANT_CLUSTER_API_KEY" | tee "$tmp/out.log"
+# Run a stage detached on the VM and follow its log by polling. A single long `colab exec`
+# isn't safe: its output stream stalled mid-run twice while the job kept going, and the
+# client never returned. Polls are short, so a stalled one just times out and retries.
+remote_stage() {  # $1 = local stage file, $2 = stage name
+  local name=$2 offset=0 status=running out
+  colab upload -s "$S" "$1" "/content/$name.py" >/dev/null
+  # MIRA_EVAL always passed: kernel env persists, and the detached job inherits it
+  printf '%s\n' "import subprocess" \
+    "subprocess.Popen('cd /content && rm -f $name.status && python3 -u $name.py > $name.log 2>&1; echo \$? > $name.status', shell=True, start_new_session=True)" \
+    > "$tmp/launch.py"
+  colab exec -s "$S" -f "$tmp/launch.py" --timeout 60 \
+    --env MIRA_EVAL="$EVAL" \
+    --env QDRANT_CLUSTER_ENDPOINT="$QDRANT_CLUSTER_ENDPOINT" \
+    --env QDRANT_CLUSTER_API_KEY="$QDRANT_CLUSTER_API_KEY" >/dev/null
+  while [[ $status == running ]]; do
+    sleep 30
+    printf '%s\n' "import os" \
+      "d = open('/content/$name.log', 'rb').read() if os.path.exists('/content/$name.log') else b''" \
+      "print(d[$offset:].decode(errors='replace'), end='')" \
+      "print('\n@@OFFSET', len(d))" \
+      "print('@@STATUS', open('/content/$name.status').read().strip() if os.path.exists('/content/$name.status') else 'running')" \
+      > "$tmp/poll.py"
+    out=$(timeout 120 colab exec -s "$S" -f "$tmp/poll.py" --timeout 60 2>&1) || continue
+    if grep -q "not found" <<<"$out" && ! grep -q "^@@STATUS" <<<"$out"; then
+      echo "Colab session '$S' is gone"; return 1
+    fi
+    grep -q "^@@STATUS" <<<"$out" || continue
+    { grep -v -e "^@@OFFSET" -e "^@@STATUS" <<<"$out" || true; } | tee -a "$tmp/out.log"
+    offset=$(sed -n 's/^@@OFFSET //p' <<<"$out")
+    status=$(sed -n 's/^@@STATUS //p' <<<"$out")
+  done
+  [[ $status == 0 ]]
+}
+
+remote_stage "$tmp/stage1.py" stage1 || { echo "COLAB RUN FAILED (stage 1)"; exit 1; }
 
 if (( EVAL )); then
-  # The kernel swallows SystemExit, so colab exec exits 0 even on failure; check markers
-  grep -q "^STAGE 1 DONE" "$tmp/out.log" || { echo "COLAB RUN FAILED (stage 1)"; exit 1; }
   # Checkpoint before the eval, so a VM reclaimed mid-eval doesn't cost the indexing
   mkdir -p "$(dirname "$CHECKPOINT")"
   colab download -s "$S" /content/embeddings.tar "$CHECKPOINT.part" && mv "$CHECKPOINT.part" "$CHECKPOINT"
   echo "Checkpoint saved: $CHECKPOINT ($(du -h "$CHECKPOINT" | cut -f1))"
-  colab exec -s "$S" -f "$tmp/stage2.py" --timeout 3600 | tee -a "$tmp/out.log"
+  remote_stage "$tmp/stage2.py" stage2 || { echo "COLAB RUN FAILED (stage 2)"; exit 1; }
   cp "$tmp/out.log" data/eval/colab_eval.log; echo "Saved data/eval/colab_eval.log"
 fi
 
