@@ -11,6 +11,7 @@ from .qdrant_store import QdrantMultivectorStore, SearchResult
 from .ingest import DocumentIndexer, IndexingResult
 from .search import VisualRetriever, RetrievalResult
 from .lexical import BM25Index, tokenize
+from .hybrid import HybridRetriever, HybridResult, query_weights
 
 __all__ = [
     'ColQwenEmbedder',
@@ -24,4 +25,7 @@ __all__ = [
     'RetrievalResult',
     'BM25Index',
     'tokenize',
+    'HybridRetriever',
+    'HybridResult',
+    'query_weights',
 ]
