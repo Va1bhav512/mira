@@ -1,0 +1,47 @@
+{"query": "what does register 0x2D control on the accelerometer", "document_id": "adxl345", "pages": [22, 25], "type": "identifier"}
+{"query": "what to do with USB_VBUS if the host lacks USB suspend support", "document_id": "Quectel_EC25_Hardware_Design_V2.2", "pages": [38], "type": "identifier"}
+{"query": "order code for the STM32F401RE in the LQFP64 package", "document_id": "DS_stm32f401re", "pages": [131, 132], "type": "identifier"}
+{"query": "TXPOWER register offset for the 2.4 GHz radio", "document_id": "nRF52840_OPS_v0.5.1", "pages": [266, 275], "type": "identifier"}
+{"query": "bit encoding of the PIO JMP instruction", "document_id": "RP-008371-DS-1-rp2040-datasheet", "pages": [322], "type": "identifier"}
+{"query": "bit fields of ctrl_meas register 0xF4", "document_id": "bst-bme280-ds002", "pages": [27, 28], "type": "identifier"}
+{"query": "what the SGL/DIFF bit selects after the start bit", "document_id": "MCP3004-MCP3008-Data-Sheet-DS20001295", "pages": [18], "type": "identifier"}
+{"query": "VSENSE pin feedback and setting the output voltage", "document_id": "tps5430", "pages": [9, 15], "type": "identifier"}
+{"query": "PCM_CLK and PCM_SYNC timing in primary mode", "document_id": "Quectel_EC25_Hardware_Design_V2.2", "pages": [53, 54], "type": "identifier"}
+{"query": "how long to hold PWRKEY low to power on", "document_id": "Quectel_EC25_Hardware_Design_V2.2", "pages": [42, 43], "type": "identifier"}
+{"query": "LM358B input offset voltage spec", "document_id": "lm358", "pages": [5], "type": "identifier"}
+{"query": "BLEU on newstest2014 English-to-German", "document_id": "test", "pages": [7], "type": "identifier"}
+{"query": "ESP32-D0WD-V3 package size and in-package flash", "document_id": "esp32_datasheet_en", "pages": [10], "type": "identifier"}
+{"query": "how many BCM2711 GPIOs reach the 40-pin header", "document_id": "RP-008341-DS-1-raspberry-pi-4-datasheet", "pages": [9], "type": "identifier"}
+{"query": "dig_H4 dig_H5 humidity compensation code", "document_id": "bst-bme280-ds002", "pages": [24, 25], "type": "identifier"}
+{"query": "diagram of the MatMul, Scale, Mask and SoftMax steps beside several attention layers run in parallel and concatenated", "document_id": "test", "pages": [3], "type": "visual"}
+{"query": "drawing of the whole model with encoder and decoder stacks repeated N times", "document_id": "test", "pages": [2], "type": "visual"}
+{"query": "visualization of attention lines linking words in a sentence about the law never being perfect", "document_id": "test", "pages": [13, 14], "type": "visual"}
+{"query": "internal block diagram of the microcontroller with two DMA controllers, GPIO ports A to H and USB OTG", "document_id": "DS_stm32f401re", "pages": [13], "type": "visual"}
+{"query": "header pin numbering diagram showing which pins carry 3V3, 5V and ground", "document_id": "RP-008341-DS-1-raspberry-pi-4-datasheet", "pages": [9], "type": "visual"}
+{"query": "Pi 4 board outline with mounting holes and measurements in millimetres", "document_id": "RP-008341-DS-1-raspberry-pi-4-datasheet", "pages": [7], "type": "visual"}
+{"query": "waveforms of chip select, clock and data lines when writing to the accelerometer over 4-wire serial", "document_id": "adxl345", "pages": [14], "type": "visual"}
+{"query": "timing waveform where the converter shifts out bits B9 down to B0 after a start bit", "document_id": "MCP3004-MCP3008-Data-Sheet-DS20001295", "pages": [19], "type": "visual"}
+{"query": "curves of how quickly the reading settles after a sudden change for different filter coefficients", "document_id": "bst-bme280-ds002", "pages": [18], "type": "visual"}
+{"query": "chart of an instrument test profile stepping between hot and cold survival and operating levels with power on/off bars", "document_id": "NASA Thermal Control Engineering Guidebook v4", "pages": [154, 155], "type": "visual"}
+{"query": "plot of gain in dB rolling off with input frequency for the current and power monitor", "document_id": "ina219", "pages": [6], "type": "visual"}
+{"query": "outline drawing of the 8-pin package with the exposed thermal pad and its dimensions", "document_id": "tps5430", "pages": [34, 37], "type": "visual"}
+{"query": "illustration of the switch being bolted into a rack at the front and at the middle", "document_id": "Installing-a-switch", "pages": [13], "type": "visual"}
+{"query": "heatmap of patch similarities overlaid on a page about oil production in Kazakhstan", "document_id": "ICLR-2025-colpali-efficient-document-retrieval-with-vision-language-models-Paper-Conference", "pages": [21], "type": "visual"}
+{"query": "figure comparing spatial pooling with semantic clustering and where merging sits between the vision encoder and the LLM", "document_id": "2025.findings-acl.1003", "pages": [5], "type": "visual"}
+{"query": "line plot of relative nDCG dropping as the pool factor grows, one line per dataset", "document_id": "ICLR-2025-colpali-efficient-document-retrieval-with-vision-language-models-Paper-Conference", "pages": [8], "type": "visual"}
+{"query": "why are the attention dot products divided by the square root of the key size", "document_id": "test", "pages": [3], "type": "semantic"}
+{"query": "regularization used when training the translation model", "document_id": "test", "pages": [7], "type": "semantic"}
+{"query": "how can the accelerometer save power by itself when nothing is moving", "document_id": "adxl345", "pages": [12, 25], "type": "semantic"}
+{"query": "recommended sensor settings for detecting a change of floor inside a building", "document_id": "bst-bme280-ds002", "pages": [19], "type": "semantic"}
+{"query": "how fast can the 10-bit converter sample when powered from 5 volts", "document_id": "MCP3004-MCP3008-Data-Sheet-DS20001295", "pages": [0, 2], "type": "semantic"}
+{"query": "what switching frequency does the step-down regulator run at", "document_id": "tps5430", "pages": [0, 8], "type": "semantic"}
+{"query": "how many switches can share power in a ring arrangement", "document_id": "Installing-a-switch", "pages": [6], "type": "semantic"}
+{"query": "how is the margined cold environment for thermal vacuum testing determined", "document_id": "NASA Thermal Control Engineering Guidebook v4", "pages": [154], "type": "semantic"}
+{"query": "how much retrieval performance does fine-tuning recover after aggressive patch merging", "document_id": "2025.findings-acl.1003", "pages": [5], "type": "semantic"}
+{"query": "query latency and memory footprint of late-interaction page retrieval", "document_id": "ICLR-2025-colpali-efficient-document-retrieval-with-vision-language-models-Paper-Conference", "pages": [7], "type": "semantic"}
+{"query": "what stays powered in the lowest-power sleep mode and what can wake the chip", "document_id": "esp32_datasheet_en", "pages": [29], "type": "semantic"}
+{"query": "absolute maximum input supply voltage for the single-board computer", "document_id": "RP-008341-DS-1-raspberry-pi-4-datasheet", "pages": [7], "type": "semantic"}
+{"query": "how do insulation blankets work in vacuum and how are they modelled in thermal analysis", "document_id": "NASA Thermal Control Engineering Guidebook v4", "pages": [46, 47], "type": "semantic"}
+{"query": "what is the cybersecurity framework 2.0 and how do organisations use it", "document_id": "NIST.SP.1299.pdf", "pages": [1], "type": "semantic"}
+{"query": "retrieving documents directly from page images instead of extracted text", "document_id": "ICLR-2025-colpali-efficient-document-retrieval-with-vision-language-models-Paper-Conference", "pages": [0], "type": "semantic"}
+{"query": "pulse width needed on the power key to start the LTE module", "document_id": "Quectel_EC25_Hardware_Design_V2.2", "pages": [42, 43], "type": "semantic"}
