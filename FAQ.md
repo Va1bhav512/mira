@@ -494,13 +494,14 @@ Main benchmark: **ViDoRe V3** (Hugging Face `vidore/vidore_v3_*`). These are the
 |--------|------:|----------------:|------------------:|
 | hr | 1,110 | 318 | ~22 min |
 | computer_science | 1,360 | 215 | ~27 min |
-| physics | 1,674 | 302 | ~35 min |
-| energy | 2,225 | 308 | ~45 min |
+| physics 🇫🇷 | 1,674 | 302 | ~35 min |
+| energy 🇫🇷 | 2,225 | 308 | ~45 min |
 | pharmaceuticals | 2,313 | 364 | ~45 min |
 | finance_en | 2,942 | 309 | ~1 h |
-| industrial | 5,244 | 283 | ~1 h 45 |
+| finance_fr 🇫🇷 | 2,384 | 320 | ~48 min |
 
-Each query appears in 6 languages. English counts are total/6, checked directly only on `energy`. Why V3:
+Each query appears in 6 languages. English counts are total/6, checked directly on `hr` (318) and `energy`.
+🇫🇷 = **French page text**: Mira's BM25 stemmer/stopwords are English, so the lexical channel is not meaningful there yet. First runs use `computer_science` + `hr`; add `pharmaceuticals` for charts/tables in the final report. Why V3:
 - Each page includes `markdown` text, so BM25 gets text without OCR.
 - Queries are human-written or synthetic, all human-verified, and tagged with `query_types` (extractive, numerical, multi-hop…), `query_format` (question / keyword / instruction) and `content_type` (Text, Table, Chart, Infographic…). These tags give a per-type breakdown like the custom set's.
 - Relevance is graded (`score` 1–2), and each relevant page has **annotated bounding boxes**. Phase 5 crops can be scored against them.
