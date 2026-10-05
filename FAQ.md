@@ -227,6 +227,26 @@ Late interaction allows different query tokens to match different parts of the p
 
 Single vector would compress entire page, losing this fine-grained alignment.
 
+### Why store `patch_grid` and `image_token_start` with every page?
+
+ColQwen's output for a page is not just image patches. The sequence is:
+
+```
+[prompt tokens ...][image tokens: rows × cols][more prompt tokens ...]
+ ^ 0               ^ image_token_start
+```
+
+All of these vectors are stored and used for MaxSim, because that's how the model was trained to score pages. But Phase 5 (evidence cropping) needs to know *which* vectors are image patches and *where* on the page each one sits. So at embedding time we record:
+
+- `patch_grid = (rows, cols)`: read from the processor's `image_grid_thw` (in 14-px patches) divided by the 2×2 spatial merge. It is **not** guessed from the vector count.
+- `image_token_start`: position of the first image token.
+
+Then `embeddings[start : start + rows*cols].reshape(rows, cols, 128)` is the page's patch grid (`PageEmbedding.patch_embeddings`). Padding vectors (all zeros, added when a batch mixes page sizes) are stripped before storage.
+
+### Why fp16 instead of 4-bit quantization for ColQwen?
+
+ColQwen2.5 is a ~3B model: ~7.5 GB in fp16, which fits a 16 GB T4 with room for batches. 4-bit would need `bitsandbytes` and can degrade embedding quality, for no practical gain on a T4. (T4s lack bf16 support, hence fp16.) A 4 GB laptop GPU can't hold it either way, so GPU work runs on Colab via `scripts/test_colab.sh`.
+
 ---
 
 ## Phase 3: Text Indexing
@@ -271,6 +291,27 @@ This adds complexity without clear benefit because:
 
 Two complementary signals (visual + lexical) is cleaner and more interpretable for ablation studies.
 
+### How does the BM25 tokenizer handle identifiers?
+
+Off-the-shelf tokenizers split and stem in ways that wreck part numbers. `mira.retrieval.lexical.tokenize` instead:
+
+| Input | Tokens | Why |
+|-------|--------|-----|
+| `STM32F401RE` | `stm32f401re` | Anything with a digit is kept whole, never stemmed |
+| `0x7FA93C` | `0x7fa93c` | Hex addresses kept whole |
+| `VDD_IO` | `vdd_io`, `vdd`, `io` | Compound kept whole **plus** its parts, so "VDD IO" also matches |
+| `I²C` | `i2c` | NFKC normalization (also fixes ligatures like `ﬁ`) |
+| `trans-\nformer` | `transform` | Words hyphenated across a line break are rejoined |
+| `The registers` | `regist` | Plain words: stopwords dropped, then stemmed |
+
+**Known limitation:** BM25 matches whole tokens, so `STM32F401RE` does not match the orderable variant `STM32F401RET6` or the family wildcard `STM32F401xE` (both appear in the STM32 datasheet). Query-time prefix expansion over the vocabulary is a candidate fix, to be measured on the labelled queries rather than added blind.
+
+### Why page-level BM25 with `bm25s`, not chunks or Qdrant sparse vectors?
+
+- **Page-level**: ColQwen retrieves pages, so both rankings use the same unit `(document_id, page_num)` and fuse directly. Finding the region *within* a page is Phase 5's job.
+- **Local `bm25s` over Qdrant sparse vectors**: Qdrant could store BM25-style sparse vectors and fuse server-side, but the adaptive weighting is our contribution. Doing fusion in Python keeps it easy to implement, inspect and ablate, and BM25 then runs offline on CPU.
+- **Storage**: one `pages.jsonl` of page texts; the BM25 matrix is rebuilt in memory on first search (~1.7 s for 2,243 pages, searches then take <1 ms). No index format to version.
+
 ---
 
 ## Phase 4: Retrieval & Fusion
@@ -299,27 +340,29 @@ Advantages:
 
 ### How does query-adaptive fusion work?
 
-Instead of fixed weights (w_visual=1, w_lexical=1), adjust based on query:
+`mira.retrieval.hybrid.query_weights(query)` looks at cheap surface features of the query (no model call) and shifts weight between the two channels:
 
-```python
-def compute_weights(query):
-    features = extract_features(query)
-    
-    # High BM25 weight for identifier-heavy queries
-    if has_hex_pattern(query) or has_alphanumeric_id(query):
-        return {"bm25": 1.5, "visual": 0.7}
-    
-    # High visual weight for diagram/chart queries
-    if has_visual_keywords(query, ["diagram", "graph", "chart", "figure"]):
-        return {"bm25": 0.6, "visual": 1.5}
-    
-    # Balanced for general queries
-    return {"bm25": 1.0, "visual": 1.0}
+| Query feature | Example | Weights (visual, lexical) |
+|---------------|---------|---------------------------|
+| Identifier or quoted text | `ADXL345 register 0x2D`, `"deep sleep"` | 0.5, 1.5 |
+| Visual cue word (figure, chart, diagram, table, shown, ...) | `which chart shows revenue` | 1.5, 0.5 |
+| Both, or neither | `block diagram of the RP2040`, `how does attention work` | 1.0, 1.0 |
+
+Identifiers are detected by regex: hex (`0x2D`), letter/digit mixes (`STM32F401RE`, `I2C`, `3V3`), and snake-case pin names (`USB_VBUS`). The weights then go into weighted RRF:
+
 ```
+score(page) = w_visual / (60 + rank_visual) + w_lexical / (60 + rank_lexical)
+```
+
+`HybridRetriever.search(query, mode=...)` supports four modes for the ablation: `adaptive`, `fixed` (1:1), `visual` only, `lexical` only. Each result keeps both channel ranks, so you can see *why* a page won.
+
+The shift of 0.5 is hand-set. It should be tuned (and adaptive shown to beat fixed) on the labelled query set with `scripts/eval_retrieval.py`; that comparison is this contribution's evidence.
 
 This is the first novel contribution of Mira.
 
-### Why two-stage retrieval (coarse → exact MaxSim)?
+### Why two-stage retrieval (coarse → exact MaxSim)? Is it implemented?
+
+**Not yet, deliberately.** Today the visual channel is Qdrant's exact MaxSim over every page. The coarse stage only pays off once that is measurably slow; with ~2,000 pages it probably isn't, and the latency we see now is mostly network (the Qdrant cluster is in São Paulo). Measure on the full corpus first. The reasoning for when it becomes worthwhile:
 
 MaxSim is expensive:
 ```
@@ -468,9 +511,27 @@ Generation:
 - RAGAS answer correctness
 - Custom: citation accuracy (bbox actually contains answer)
 
+### How do we check retrieval results? How should the labelled queries be written?
+
+Spot checks (reading a few top pages and confirming they contain the answer) catch bugs but aren't evidence. The evidence is `scripts/eval_retrieval.py` over a hand-labelled file, `data/eval/queries.jsonl`:
+
+```json
+{"query": "ADXL345 register 0x2D", "document_id": "adxl345", "pages": [12], "type": "identifier"}
+```
+
+`pages` are 0-indexed; `type` is `identifier`, `visual` or `semantic`. The script reports Recall@1/5/10, MRR and nDCG@10 per type, for each mode.
+
+Writing the queries:
+- **Don't copy wording from the page text.** Queries lifted from the text favour BM25 and inflate its numbers. Write them the way a user would ask.
+- **Write `visual` queries by looking at the figure or table**, not the caption.
+- **Don't put the document name in every query.** "ADXL345 register 0x2D" is easy because "ADXL345" alone narrows it to one document. Mix in queries that don't name the part.
+- Label every page that answers the query, not just the first one you find.
+
 ### What is ablation testing and why important?
 
 Ablation removes components to test contribution:
+
+*Illustrative numbers only, not results. Replace with real numbers from `scripts/eval_retrieval.py`.*
 
 | System | Recall@5 | Notes |
 |--------|----------|-------|
