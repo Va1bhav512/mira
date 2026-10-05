@@ -7,6 +7,7 @@ from mira.pdf import iter_processed_pages
 from .colqwen import ColQwenEmbedder
 from .embeddings import generate_embeddings
 from .qdrant_store import QdrantMultivectorStore
+from .lexical import BM25Index
 
 
 @dataclass
@@ -20,14 +21,15 @@ class IndexingResult:
 
 
 class DocumentIndexer:
-    """Index PDF documents into Qdrant."""
+    """Index PDF documents into Qdrant (visual) and BM25 (text)."""
     
     def __init__(
         self,
         embedder: Optional[ColQwenEmbedder] = None,
         store: Optional[QdrantMultivectorStore] = None,
         qdrant_url: Optional[str] = None,
-        qdrant_api_key: Optional[str] = None
+        qdrant_api_key: Optional[str] = None,
+        text_index: Optional[BM25Index] = None
     ):
         """
         Initialize document indexer.
@@ -37,12 +39,14 @@ class DocumentIndexer:
             store: Qdrant store (created if None)
             qdrant_url: Qdrant URL (from env if None)
             qdrant_api_key: Qdrant API key (from env if None)
+            text_index: BM25 index (default location if None)
         """
         self.embedder = embedder or ColQwenEmbedder()
         self.store = store or QdrantMultivectorStore(
             url=qdrant_url,
             api_key=qdrant_api_key
         )
+        self.text_index = text_index or BM25Index()
     
     def setup(self):
         """Ensure Qdrant collection exists."""
@@ -98,10 +102,12 @@ class DocumentIndexer:
                 cache_dir=cache_dir
             )
             self.store.upsert_pages(embeddings, [page.text for page in pages])
+            self.text_index.add_pages(document_id, [(page.page_num, page.text) for page in pages])
             for page_emb, page in zip(embeddings, pages):
                 total_patches += page_emb.embeddings.shape[0]
                 text_sources[page.text_source] = text_sources.get(page.text_source, 0) + 1
         
+        self.text_index.save()
         duration = time() - start_time
         
         result = IndexingResult(
