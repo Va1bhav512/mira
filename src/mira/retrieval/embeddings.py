@@ -112,10 +112,15 @@ def _load_from_cache(cache_path: Path, page_num: int) -> Optional[PageEmbedding]
     if 'image_token_start' not in meta:
         return None
 
+    # Caches written before the bf16 NaN fallback can hold fp16-overflowed pages
+    embeddings = np.load(emb_path)
+    if np.isnan(embeddings).any():
+        return None
+
     return PageEmbedding(
         document_id=meta['document_id'],
         page_num=meta['page_num'],
-        embeddings=np.load(emb_path),
+        embeddings=embeddings,
         patch_grid=tuple(meta['patch_grid']),
         image_token_start=meta['image_token_start'],
         image_dims=tuple(meta['image_dims']),
