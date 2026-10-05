@@ -6,12 +6,18 @@ Phase 4 can fuse this ranking with the visual one.
 """
 
 import json
+import os
 import re
 import unicodedata
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import bm25s
+# bm25s imports JAX when installed (Colab/Kaggle ship it) and runs a dummy op, which makes
+# JAX preallocate 75% of GPU memory and starves ColQwen. We never use bm25s's JAX top-k
+# path (we sort with numpy), so keep JAX on CPU. setdefault: an explicit user setting wins.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
+import bm25s  # noqa: E402
 import numpy as np
 import Stemmer
 from bm25s.stopwords import STOPWORDS_EN
