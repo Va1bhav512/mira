@@ -2,13 +2,19 @@
 # Run Mira's GPU tests on a Colab T4 against the LOCAL working tree
 # (uncommitted changes included), so you can test before pushing.
 #
-# Usage: scripts/test_colab.sh [session-name]     (default: mira)
-#   Reuses the session if it exists, so re-runs skip VM allocation.
-#   Stop it when done: colab stop -s mira
+# Usage: scripts/test_colab.sh [--eval] [session-name]     (default session: mira)
+#   Default: pytest + index/search example on test.pdf (cloud Qdrant).
+#   --eval:  pytest, then index all of data/samples into an on-VM Qdrant + BM25 under
+#            /content/cache (resumable; ~1 h first run) and run eval_retrieval.py on all
+#            modes. Output saved to data/eval/colab_eval.log.
+#   Reuses the session if it exists, so re-runs skip VM allocation (and, with --eval,
+#   reuse the on-VM index). Stop it when done: colab stop -s mira
 #
 # Needs: colab CLI authenticated, .env with QDRANT_CLUSTER_ENDPOINT/_API_KEY.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+EVAL=0
+if [[ ${1:-} == --eval ]]; then EVAL=1; shift; fi
 S=${1:-mira}
 
 set -a; source .env; set +a
@@ -16,8 +22,10 @@ set -a; source .env; set +a
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
-# Tracked + untracked-but-not-ignored files, plus the sample PDF (data/ is gitignored)
-{ git ls-files -co --exclude-standard; echo data/samples/test.pdf; } | tar czf "$tmp/mira.tgz" -T -
+# Tracked + untracked-but-not-ignored files, plus sample PDFs (data/samples/ is gitignored):
+# just test.pdf normally, the whole corpus (~72 MB) for --eval
+if (( EVAL )); then samples=(data/samples/*.pdf); else samples=(data/samples/test.pdf); fi
+{ git ls-files -co --exclude-standard; printf '%s\n' "${samples[@]}"; } | tar czf "$tmp/mira.tgz" -T -
 
 # `colab status` exits 0 even for a missing session, so check its message
 if colab status -s "$S" 2>&1 | grep -q "not found"; then
@@ -28,7 +36,7 @@ colab upload -s "$S" "$tmp/mira.tgz" /content/mira.tgz
 # The kernel is long-lived and won't see a fresh `pip install -e`, and subprocess
 # output bypasses it, so everything runs as subprocesses with output relayed.
 cat > "$tmp/run.py" <<'PY'
-import subprocess, sys
+import os, subprocess, sys
 
 def run(cmd):
     print(f"\n$ {cmd}", flush=True)
@@ -46,13 +54,23 @@ run(f"{sys.executable} -m pip install -q -e '.[dev]'")
 # Colab ships torchao 0.10; transformers 5 refuses to load any model with torchao < 0.16 present
 run(f"{sys.executable} -m pip uninstall -q -y torchao")
 run(f"{sys.executable} -m pytest -v -rs tests")
-run(f"{sys.executable} examples/index_and_search.py data/samples/test.pdf")
+if os.environ.get("MIRA_EVAL") == "1":
+    # Index lives outside /content/mira (wiped each run) so re-runs resume instead of re-embedding
+    paths = "--qdrant-path /content/cache/qdrant --bm25-path /content/cache/bm25"
+    run(f"{sys.executable} scripts/index_corpus.py {paths} --cache-dir /content/cache/embeddings")
+    run(f"{sys.executable} scripts/eval_retrieval.py {paths}")
+else:
+    run(f"{sys.executable} examples/index_and_search.py data/samples/test.pdf")
 print("\nALL PASSED")
 PY
 
-colab exec -s "$S" -f "$tmp/run.py" --timeout 3600 \
+# MIRA_EVAL is always passed: kernel env persists, so a stale "1" would leak into a later plain run
+colab exec -s "$S" -f "$tmp/run.py" --timeout $(( EVAL ? 14400 : 3600 )) \
+  --env MIRA_EVAL="$EVAL" \
   --env QDRANT_CLUSTER_ENDPOINT="$QDRANT_CLUSTER_ENDPOINT" \
   --env QDRANT_CLUSTER_API_KEY="$QDRANT_CLUSTER_API_KEY" | tee "$tmp/out.log"
+
+if (( EVAL )); then cp "$tmp/out.log" data/eval/colab_eval.log; echo "Saved data/eval/colab_eval.log"; fi
 
 echo "Session '$S' still running. Stop it: colab stop -s $S"
 
