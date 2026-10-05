@@ -126,7 +126,7 @@ Render Pages        Visual Index        Text Index
 | 1 | PDF processing | Renderer, text extraction, OCR fallback | ✅ Complete |
 | 2 | Visual indexing | ColQwen embeddings, Qdrant setup | ✅ Complete (verified on Colab T4) |
 | 3 | Text indexing | BM25 implementation, native text pipeline | ✅ Complete |
-| 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | 🔄 Built; needs labelled queries to tune and evaluate |
+| 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | ✅ Built and evaluated ([results](data/eval/results.md)) |
 | 5 | Evidence cropping | Heatmaps, spatial aggregation, hi-res crop | Planned |
 | 6 | Generation | VLM serving, citations, API | Planned |
 | 7 | Evaluation | ViDoRe/RAGAS benchmarks, ablations | Planned |

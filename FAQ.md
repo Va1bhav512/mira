@@ -531,16 +531,18 @@ Writing the queries:
 
 Ablation removes components to test contribution:
 
-*Illustrative numbers only, not results. Replace with real numbers from `scripts/eval_retrieval.py`.*
+Retrieval ablation, **real results** (2,674 pages, 47 labelled queries; full table, setup and caveats in `data/eval/results.md`):
 
-| System | Recall@5 | Notes |
-|--------|----------|-------|
-| ColQwen only | 0.72 | Baseline |
-| BM25 only | 0.45 | Baseline |
-| Fixed RRF (w=1,1) | 0.78 | Fusion helps |
-| **Adaptive RRF** | **0.82** | This is your contribution |
-| Full page to VLM | 0.71 accuracy | Baseline |
-| **Evidence crop + VLM** | **0.85 accuracy** | Your contribution |
+| System | R@5 | MRR | nDCG@10 |
+|--------|----:|----:|--------:|
+| BM25 only | 0.798 | 0.724 | 0.751 |
+| ColQwen only | 0.883 | 0.791 | 0.801 |
+| Fixed RRF (1:1) | 0.894 | 0.814 | 0.824 |
+| **Adaptive RRF** | **0.904** | **0.836** | **0.843** |
+
+The ordering holds on every metric, but adaptive vs fixed is a 2-query difference at R@1 on 47 queries, so it needs a significance test and ideally more queries before claiming it strongly.
+
+The generation half (full page vs evidence crop to the VLM) is Phase 5–6 and has no numbers yet.
 
 Tables prove:
 - You didn't just "assemble existing components"
