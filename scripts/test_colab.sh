@@ -56,7 +56,15 @@ run(f"{sys.executable} -m pip uninstall -q -y torchao")
 run(f"{sys.executable} -m pytest -v -rs tests")
 if os.environ.get("MIRA_EVAL") == "1":
     # Index lives outside /content/mira (wiped each run) so re-runs resume instead of re-embedding
-    paths = "--qdrant-path /content/cache/qdrant --bm25-path /content/cache/bm25"
+    # Qdrant server on the VM (single binary, no Docker); storage persists under /content/cache.
+    # Not embedded mode: that unpickles every point into RAM and OOMs a 12 GB VM at full corpus.
+    if subprocess.run("curl -sf localhost:6333/readyz", shell=True).returncode:
+        run("mkdir -p /content/cache/qdrant-bin && cd /content/cache/qdrant-bin && { [ -x qdrant ] || "
+            "curl -sL https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-unknown-linux-gnu.tar.gz | tar xz; }")
+        subprocess.Popen("QDRANT__STORAGE__STORAGE_PATH=/content/cache/qdrant-server /content/cache/qdrant-bin/qdrant"
+                         " > /content/cache/qdrant.log 2>&1", shell=True, start_new_session=True)
+        run("for i in $(seq 60); do curl -sf localhost:6333/readyz && exit 0; sleep 1; done; exit 1")
+    paths = "--qdrant-url http://localhost:6333 --bm25-path /content/cache/bm25"
     run(f"{sys.executable} scripts/index_corpus.py {paths} --cache-dir /content/cache/embeddings")
     run(f"{sys.executable} scripts/eval_retrieval.py {paths}")
 else:
