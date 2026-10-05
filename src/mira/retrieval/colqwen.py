@@ -44,7 +44,11 @@ class ColQwenEmbedder:
         gc.collect()
         if self.device == "cuda":
             torch.cuda.empty_cache()
-        self.model = ColQwen2_5.from_pretrained(self.model_name, dtype=dtype).to(self.device).eval()
+        # device_map loads weights straight to the GPU: 1.2 GB peak anonymous host RAM vs 8.1 GB
+        # for load-on-CPU-then-.to(), which got the indexer OOM-killed on a 12 GB Colab VM when
+        # the bf16 fallback reloaded mid-run (measured on Colab T4)
+        kwargs = {"device_map": self.device} if self.device == "cuda" else {}
+        self.model = ColQwen2_5.from_pretrained(self.model_name, dtype=dtype, **kwargs).eval()
 
     def _redo_in_bf16(self, items: list, embed_one: Callable) -> list:
         """
