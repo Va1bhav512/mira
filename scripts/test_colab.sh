@@ -2,22 +2,32 @@
 # Run Mira's GPU tests on a Colab T4 against the LOCAL working tree
 # (uncommitted changes included), so you can test before pushing.
 #
-# Usage: scripts/test_colab.sh [--eval] [session-name]     (default session: mira)
+# Usage: scripts/test_colab.sh [--eval | --eval-vidore subset[,subset...]] [session-name]
 #   Default: pytest + index/search example on test.pdf (cloud Qdrant).
 #   --eval:  pytest, then index all of data/samples into a Qdrant server + BM25 on the VM
 #            and run eval_retrieval.py on all modes. Output saved to data/eval/colab_eval.log.
 #            After indexing, the embedding cache (~500 MB) is downloaded to
 #            .cache/colab/embeddings.tar and re-uploaded on later runs, so a reclaimed VM
 #            costs an upload + re-render/OCR (~20 min) instead of ~1 h of re-embedding.
+#   --eval-vidore: pytest, then index the given ViDoRe V3 subsets (e.g.
+#            computer_science,hr) and run eval_retrieval.py --vidore on each.
+#            Log saved to data/eval/vidore_eval.log; embedding cache checkpointed to
+#            .cache/colab/embeddings_vidore.tar the same way as --eval.
 #   Reuses the session if it exists. Stop it when done: colab stop -s mira
 #
 # Needs: colab CLI authenticated, .env with QDRANT_CLUSTER_ENDPOINT/_API_KEY.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 EVAL=0
+VIDORE_SUBSETS=""
 if [[ ${1:-} == --eval ]]; then EVAL=1; shift; fi
+if [[ ${1:-} == --eval-vidore ]]; then VIDORE_SUBSETS=$2; shift 2; fi
+if (( EVAL )) && [[ -n $VIDORE_SUBSETS ]]; then
+  echo "--eval and --eval-vidore are mutually exclusive"; exit 1
+fi
 S=${1:-mira}
 CHECKPOINT=.cache/colab/embeddings.tar
+VIDORE_CHECKPOINT=.cache/colab/embeddings_vidore.tar
 
 set -a; source .env; set +a
 : "${QDRANT_CLUSTER_ENDPOINT:?missing in .env}" "${QDRANT_CLUSTER_API_KEY:?missing in .env}"
@@ -37,6 +47,9 @@ colab upload -s "$S" "$tmp/mira.tgz" /content/mira.tgz
 if (( EVAL )) && [[ -f $CHECKPOINT ]]; then
   colab upload -s "$S" "$CHECKPOINT" /content/embeddings.tar
 fi
+if [[ -n $VIDORE_SUBSETS ]] && [[ -f $VIDORE_CHECKPOINT ]]; then
+  colab upload -s "$S" "$VIDORE_CHECKPOINT" /content/embeddings_vidore.tar
+fi
 
 # Each stage runs as its own detached process on the VM (see remote_stage), so a fresh
 # `pip install -e` is visible to the steps after it. Shared helpers for both stages:
@@ -55,19 +68,18 @@ def run(cmd):
 PATHS = "--qdrant-url http://localhost:6333 --bm25-path /content/cache/bm25"
 PY
 
-# Stage 1: install, test, and (--eval) index the corpus, then pack the embedding cache
+# Stage 1: install, test, and (--eval/--eval-vidore) index the corpus, then pack the embedding cache
 { cat "$tmp/common.py"; cat <<'PY'
 subprocess.run("rm -rf /content/mira && mkdir /content/mira && tar xzf /content/mira.tgz -C /content/mira",
                shell=True, check=True)
 run("nvidia-smi --query-gpu=name,memory.total --format=csv")
-run(f"{sys.executable} -m pip install -q -e '.[dev]'")
+extras = "dev,vidore" if os.environ.get("MIRA_VIDORE") == "1" else "dev"
+run(f"{sys.executable} -m pip install -q -e '.[{extras}]'")
 # Colab ships torchao 0.10; transformers 5 refuses to load any model with torchao < 0.16 present
 run(f"{sys.executable} -m pip uninstall -q -y torchao")
 run(f"{sys.executable} -m pytest -v -rs tests")
-if os.environ.get("MIRA_EVAL") == "1":
-    # Restore a checkpoint uploaded from a previous VM (index lives outside the wiped /content/mira)
-    if os.path.exists("/content/embeddings.tar") and not os.path.exists("/content/cache/embeddings"):
-        run("mkdir -p /content/cache && tar xf /content/embeddings.tar -C /content/cache")
+
+def qdrant_server():
     # Qdrant server on the VM (single binary, no Docker); storage persists under /content/cache.
     # Not embedded mode: that unpickles every point into RAM and OOMs a 12 GB VM at full corpus.
     if subprocess.run("curl -sf localhost:6333/readyz", shell=True).returncode:
@@ -76,8 +88,23 @@ if os.environ.get("MIRA_EVAL") == "1":
         subprocess.Popen("QDRANT__STORAGE__STORAGE_PATH=/content/cache/qdrant-server /content/cache/qdrant-bin/qdrant"
                          " > /content/cache/qdrant.log 2>&1", shell=True, start_new_session=True)
         run("for i in $(seq 60); do curl -sf localhost:6333/readyz && exit 0; sleep 1; done; exit 1")
+
+if os.environ.get("MIRA_EVAL") == "1":
+    # Restore a checkpoint uploaded from a previous VM (index lives outside the wiped /content/mira)
+    if os.path.exists("/content/embeddings.tar") and not os.path.exists("/content/cache/embeddings"):
+        run("mkdir -p /content/cache && tar xf /content/embeddings.tar -C /content/cache")
+    qdrant_server()
     run(f"{sys.executable} scripts/index_corpus.py {PATHS} --cache-dir /content/cache/embeddings")
     run("tar cf /content/embeddings.tar -C /content/cache embeddings && ls -la /content/embeddings.tar")
+    print("\nSTAGE 1 DONE")
+elif os.environ.get("MIRA_VIDORE") == "1":
+    if os.path.exists("/content/embeddings_vidore.tar") and not os.path.exists("/content/cache/embeddings_vidore"):
+        run("mkdir -p /content/cache && tar xf /content/embeddings_vidore.tar -C /content/cache")
+    qdrant_server()
+    for subset in os.environ["VIDORE_SUBSETS"].split(","):
+        run(f"{sys.executable} scripts/index_vidore.py --subset {subset} --qdrant-url http://localhost:6333"
+            f" --bm25-path /content/cache/bm25_vidore/{subset} --cache-dir /content/cache/embeddings_vidore/{subset}")
+    run("tar cf /content/embeddings_vidore.tar -C /content/cache embeddings_vidore && ls -la /content/embeddings_vidore.tar")
     print("\nSTAGE 1 DONE")
 else:
     run(f"{sys.executable} examples/index_and_search.py data/samples/test.pdf")
@@ -92,6 +119,15 @@ print("\nALL PASSED")
 PY
 } > "$tmp/stage2.py"
 
+# Stage 2 (--eval-vidore): retrieval eval over each indexed ViDoRe subset
+{ cat "$tmp/common.py"; cat <<'PY'
+for subset in os.environ["VIDORE_SUBSETS"].split(","):
+    run(f"{sys.executable} scripts/eval_retrieval.py --vidore {subset} --qdrant-url http://localhost:6333"
+        f" --bm25-path-vidore /content/cache/bm25_vidore/{subset}")
+print("\nALL PASSED")
+PY
+} > "$tmp/stage2v.py"
+
 # Run a stage detached on the VM and follow its log by polling. A single long `colab exec`
 # isn't safe: its output stream stalled mid-run twice while the job kept going, and the
 # client never returned. Polls are short, so a stalled one just times out and retries.
@@ -104,6 +140,8 @@ remote_stage() {  # $1 = local stage file, $2 = stage name
     > "$tmp/launch.py"
   colab exec -s "$S" -f "$tmp/launch.py" --timeout 60 \
     --env MIRA_EVAL="$EVAL" \
+    --env MIRA_VIDORE="$([[ -n $VIDORE_SUBSETS ]] && echo 1 || echo 0)" \
+    --env VIDORE_SUBSETS="$VIDORE_SUBSETS" \
     --env QDRANT_CLUSTER_ENDPOINT="$QDRANT_CLUSTER_ENDPOINT" \
     --env QDRANT_CLUSTER_API_KEY="$QDRANT_CLUSTER_API_KEY" >/dev/null
   while [[ $status == running ]]; do
@@ -135,6 +173,14 @@ if (( EVAL )); then
   echo "Checkpoint saved: $CHECKPOINT ($(du -h "$CHECKPOINT" | cut -f1))"
   remote_stage "$tmp/stage2.py" stage2 || { echo "COLAB RUN FAILED (stage 2)"; exit 1; }
   cp "$tmp/out.log" data/eval/colab_eval.log; echo "Saved data/eval/colab_eval.log"
+fi
+
+if [[ -n $VIDORE_SUBSETS ]]; then
+  mkdir -p "$(dirname "$VIDORE_CHECKPOINT")"
+  colab download -s "$S" /content/embeddings_vidore.tar "$VIDORE_CHECKPOINT.part" && mv "$VIDORE_CHECKPOINT.part" "$VIDORE_CHECKPOINT"
+  echo "Checkpoint saved: $VIDORE_CHECKPOINT ($(du -h "$VIDORE_CHECKPOINT" | cut -f1))"
+  remote_stage "$tmp/stage2v.py" stage2v || { echo "COLAB RUN FAILED (stage 2)"; exit 1; }
+  cp "$tmp/out.log" data/eval/vidore_eval.log; echo "Saved data/eval/vidore_eval.log"
 fi
 
 echo "Session '$S' still running. Stop it: colab stop -s $S"

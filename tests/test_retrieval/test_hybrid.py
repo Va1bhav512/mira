@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from mira.evaluation import ndcg_at_k, recall_at_k, reciprocal_rank
+from mira.evaluation import ndcg_at_k, ndcg_at_k_graded, paired_bootstrap, recall_at_k, reciprocal_rank
 from mira.retrieval import BM25Index, PageEmbedding, QdrantMultivectorStore
 from mira.retrieval.hybrid import HybridRetriever, query_weights, rrf
 
@@ -131,3 +131,29 @@ class TestMetrics:
     def test_ndcg(self):
         assert ndcg_at_k(self.ranking, {("d", 3)}, 10) == 1
         assert ndcg_at_k(self.ranking, {("d", 7)}, 10) == pytest.approx(1 / np.log2(3))
+
+    def test_ndcg_graded(self):
+        grades = {("d", 7): 2, ("d", 1): 1}  # Fully / Critically relevant
+        dcg = 2 / np.log2(3) + 1 / np.log2(4)      # ranks 2 and 3
+        ideal = 2 / np.log2(2) + 1 / np.log2(3)    # best order: grade 2 then 1
+        assert ndcg_at_k_graded(self.ranking, grades, 10) == pytest.approx(dcg / ideal)
+
+    def test_ndcg_graded_matches_binary_when_all_grades_1(self):
+        relevant = {("d", 7), ("d", 1)}
+        graded = ndcg_at_k_graded(self.ranking, {p: 1 for p in relevant}, 10)
+        assert graded == pytest.approx(ndcg_at_k(self.ranking, relevant, 10))
+
+    def test_ndcg_graded_empty(self):
+        assert ndcg_at_k_graded(self.ranking, {}, 10) == 0.0
+
+    def test_bootstrap_clear_difference(self):
+        diff, lo, hi, p = paired_bootstrap([1.0] * 50, [0.0] * 50, n=1000)
+        assert (diff, lo, hi, p) == (1.0, 1.0, 1.0, 0.0)
+
+    def test_bootstrap_no_difference(self):
+        diff, lo, hi, p = paired_bootstrap([0.5] * 50, [0.5] * 50, n=1000)
+        assert diff == 0.0 and p == 1.0
+
+    def test_bootstrap_rejects_mismatched_lengths(self):
+        with pytest.raises(ValueError):
+            paired_bootstrap([1.0], [1.0, 2.0])
