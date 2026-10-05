@@ -653,6 +653,18 @@ Options:
 4. Parallelize OCR across CPU cores
 5. Skip OCR entirely for digitally-generated PDFs
 
+### What went wrong running the full corpus on Colab, and how is it handled?
+
+Each of these broke a real run on a Colab T4 (15 GB VRAM, 12 GB RAM, no swap):
+
+| Symptom | Cause | Handling |
+|---------|-------|----------|
+| ColQwen OOM on GPU, but PyTorch reports only 3.4 GB allocated | `bm25s` imports JAX (preinstalled on Colab) and runs a dummy op; JAX then preallocates 75% of VRAM | `lexical.py` sets `JAX_PLATFORMS=cpu` before importing `bm25s` |
+| `ValueError: Vector contains NaN values` from Qdrant | fp16 overflow inside Qwen2.5 on some pages (frequent on the scanned NASA report, ~1 in 4–8 pages; rare on digital PDFs) | Pages that come out NaN are re-embedded in bf16 (6× slower on a T4, so not the default); the cache rejects NaN entries |
+| Process `Killed` (exit 137) while reloading weights | `from_pretrained` on CPU then `.to(cuda)` peaks at 8.1 GB host RAM | Load with `device_map="cuda"`: 1.2 GB peak |
+| Eval `Killed`, and the log silently stops | Qdrant's embedded `path=` mode unpickles every point into RAM; the 2,674-page index is a 2.2 GB sqlite file | Embedded mode removed; `test_colab.sh --eval` runs a Qdrant server binary on the VM |
+| Upload fails with SSL EOF, then "session not found" | Free-tier VMs get reclaimed after a few hours, losing everything under `/content` | Re-run from scratch (~1 h of embedding); nothing persists off the VM yet |
+
 ### Qdrant multivector search is slow. What to do?
 
 Check:
