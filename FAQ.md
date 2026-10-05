@@ -663,7 +663,7 @@ Each of these broke a real run on a Colab T4 (15 GB VRAM, 12 GB RAM, no swap):
 | `ValueError: Vector contains NaN values` from Qdrant | fp16 overflow inside Qwen2.5 on some pages (frequent on the scanned NASA report, ~1 in 4–8 pages; rare on digital PDFs) | Pages that come out NaN are re-embedded in bf16 (6× slower on a T4, so not the default); the cache rejects NaN entries |
 | Process `Killed` (exit 137) while reloading weights | `from_pretrained` on CPU then `.to(cuda)` peaks at 8.1 GB host RAM | Load with `device_map="cuda"`: 1.2 GB peak |
 | Eval `Killed`, and the log silently stops | Qdrant's embedded `path=` mode unpickles every point into RAM; the 2,674-page index is a 2.2 GB sqlite file | Embedded mode removed; `test_colab.sh --eval` runs a Qdrant server binary on the VM |
-| Upload fails with SSL EOF, then "session not found" | Free-tier VMs get reclaimed after a few hours, losing everything under `/content` | Re-run from scratch (~1 h of embedding); nothing persists off the VM yet |
+| Upload fails with SSL EOF, then "session not found" | Free-tier VMs get reclaimed after a few hours, losing everything under `/content` | `test_colab.sh --eval` downloads the embedding cache (~500 MB, fp16) to `.cache/colab/` after indexing and re-uploads it next run: ~20 min instead of ~1 h |
 
 ### Qdrant multivector search is slow. What to do?
 
