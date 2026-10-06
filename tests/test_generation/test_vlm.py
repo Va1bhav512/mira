@@ -7,8 +7,10 @@ from PIL import Image, ImageDraw, ImageFont
 @pytest.fixture(scope="module")
 def generator():
     import torch
-    if not torch.cuda.is_available():
-        pytest.skip("VLM test needs a GPU")
+    # ~3 GB of 4-bit weights plus activations; also keeps a default local run on a small
+    # GPU from downloading the ~7.5 GB checkpoint
+    if not torch.cuda.is_available() or torch.cuda.get_device_properties(0).total_memory < 6e9:
+        pytest.skip("VLM test needs a GPU with >=6 GB VRAM")
     pytest.importorskip("bitsandbytes")
     from mira.generation import VLMGenerator
     return VLMGenerator()
