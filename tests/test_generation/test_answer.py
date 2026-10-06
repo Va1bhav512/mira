@@ -92,3 +92,13 @@ def test_answer_cites_retriever_boxes(retriever, strategy):
 def test_unknown_strategy_rejected(retriever):
     with pytest.raises(ValueError):
         answer_query("q", retriever, StubGenerator(), lambda *a: None, strategy="nope")
+
+
+def test_fit_budget_shrinks_many_images_keeps_few():
+    from mira.generation.vlm import TOTAL_PIXELS, fit_budget
+    big = [Image.new("RGB", (2000, 1500)) for _ in range(6)]
+    out = fit_budget(big)
+    assert sum(i.width * i.height for i in out) <= TOTAL_PIXELS
+    assert abs(out[0].width / out[0].height - 2000 / 1500) < 0.01
+    small = [Image.new("RGB", (100, 100))]
+    assert fit_budget(small)[0].size == (100, 100)

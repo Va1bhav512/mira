@@ -23,6 +23,20 @@ Question: {query}"""
 
 # ponytail: caps image tokens per evidence image (~1000) so 3 crops fit a T4 / 4 GB GPU; raise with VRAM
 MAX_PIXELS = 1024 * 28 * 28
+# All evidence images together: ~3k image tokens. 6 crops at the per-image cap ran a T4 out of memory
+# in attention (ColQwen is resident too); 3 full pages at the cap fit.
+TOTAL_PIXELS = 3 * MAX_PIXELS
+
+
+def fit_budget(images: List[Image.Image], total: int = TOTAL_PIXELS) -> List[Image.Image]:
+    """Downscale images (aspect kept) so their pixel counts sum to at most `total`, split evenly."""
+    each = total / max(len(images), 1)
+    out = []
+    for image in images:
+        scale = (each / (image.width * image.height)) ** 0.5
+        out.append(image if scale >= 1 else image.resize(
+            (max(28, int(image.width * scale)), max(28, int(image.height * scale))), Image.BICUBIC))
+    return out
 
 
 def parse_reply(reply: str, known_ids: List[str]) -> Tuple[str, List[str]]:
@@ -94,7 +108,8 @@ class VLMGenerator:
             (answer, cited evidence ids, raw model reply)
         """
         content = []
-        for evidence_id, image in evidence:
+        images = fit_budget([image for _, image in evidence])
+        for (evidence_id, _), image in zip(evidence, images):
             content += [{"type": "text", "text": f"[{evidence_id}]"}, {"type": "image", "image": image}]
         content.append({"type": "text", "text": PROMPT.format(query=query)})
 
