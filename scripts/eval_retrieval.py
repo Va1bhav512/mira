@@ -52,6 +52,15 @@ VIDORE_METRICS = {
 }
 
 
+def dump(args, query, visual, lexical):
+    """Append one query's channel rankings to --dump-rankings, so fusion can be re-scored on CPU."""
+    if args.dump_rankings:
+        with open(args.dump_rankings, "a") as f:
+            f.write(json.dumps({"query": query,
+                                "visual": [[r.document_id, r.page_num] for r in visual],
+                                "lexical": [[r.document_id, r.page_num] for r in lexical]}) + "\n")
+
+
 def print_table(modes, bucket_name, n, scores, metric_names):
     if n == 0:
         return
@@ -82,7 +91,10 @@ def run_custom(args):
     per_query_ndcg = defaultdict(list)
     for q in queries:
         relevant = {(q["document_id"], p) for p in q["pages"]}
-        results = retriever.search_modes(q["query"], top_k=10, modes=tuple(args.modes))
+        visual, lexical = retriever.channels(
+            q["query"], visual=any(m != "lexical" for m in args.modes), lexical=any(m != "visual" for m in args.modes))
+        results = retriever.fuse_modes(q["query"], visual, lexical, tuple(args.modes))
+        dump(args, q["query"], visual, lexical)
         for mode in args.modes:
             ranking = [(r.document_id, r.page_num) for r in results[mode]]
             for name, metric in METRICS.items():
@@ -140,7 +152,10 @@ def run_vidore(args):
         buckets = {"ALL", f"format:{q['query_format']}"} | {f"content:{c}" for c in content_types}
         for b in buckets:
             bucket_counts[b] += 1
-        results = retriever.search_modes(q["query"], top_k=10, modes=tuple(args.modes))
+        visual, lexical = retriever.channels(
+            q["query"], visual=any(m != "lexical" for m in args.modes), lexical=any(m != "visual" for m in args.modes))
+        results = retriever.fuse_modes(q["query"], visual, lexical, tuple(args.modes))
+        dump(args, q["query"], visual, lexical)
         for mode in args.modes:
             ranking = [(r.document_id, r.page_num) for r in results[mode]]
             for name, metric in VIDORE_METRICS.items():
@@ -168,6 +183,7 @@ def main():
     parser.add_argument("--bm25-path", default=".cache/bm25", help="BM25 dir for the custom corpus")
     parser.add_argument("--vidore", help="ViDoRe V3 subset to evaluate instead of the custom corpus")
     parser.add_argument("--collection", help="Qdrant collection for --vidore (default: vidore_v3_<subset>)")
+    parser.add_argument("--dump-rankings", help="Append each query's visual/BM25 top-50 to this JSONL")
     parser.add_argument("--bm25-path-vidore", help="BM25 dir for --vidore (default: .cache/bm25_vidore/<subset>)")
     args = parser.parse_args()
 

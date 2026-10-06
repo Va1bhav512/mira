@@ -184,21 +184,40 @@ class HybridRetriever:
             if mode not in MODES:
                 raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
 
-        visual: List[SearchResult] = []
-        lexical: List[SearchResult] = []
-        if any(m != "lexical" for m in modes):
-            if query_embedding is None:
-                query_embedding = self.embedder.embed_query(query)
-            visual = self.store.search(
-                query_embedding, top_k=self.candidates, document_filter=document_filter
-            )
-        if any(m != "visual" for m in modes):
-            lexical = self.text_index.search(query, top_k=self.candidates, document_filter=document_filter)
+        visual, lexical = self.channels(
+            query, document_filter, query_embedding,
+            visual=any(m != "lexical" for m in modes), lexical=any(m != "visual" for m in modes),
+        )
+        return self.fuse_modes(query, visual, lexical, modes, top_k)
 
+    def fuse_modes(
+        self, query: str, visual: List[SearchResult], lexical: List[SearchResult],
+        modes: Tuple[str, ...] = MODES, top_k: int = 10,
+    ) -> Dict[str, List[HybridResult]]:
+        """Fuse precomputed channel results (from channels()) for each mode."""
         return {
             m: self._fuse(query, visual if m != "lexical" else [], lexical if m != "visual" else [], m, top_k)
             for m in modes
         }
+
+    def channels(
+        self,
+        query: str,
+        document_filter: Optional[str] = None,
+        query_embedding: Optional[np.ndarray] = None,
+        visual: bool = True,
+        lexical: bool = True,
+    ) -> Tuple[List[SearchResult], List[SearchResult]]:
+        """Each channel's top `candidates` results before fusion (an empty list for a channel not asked for)."""
+        visual_results: List[SearchResult] = []
+        lexical_results: List[SearchResult] = []
+        if visual:
+            if query_embedding is None:
+                query_embedding = self.embedder.embed_query(query)
+            visual_results = self.store.search(query_embedding, top_k=self.candidates, document_filter=document_filter)
+        if lexical:
+            lexical_results = self.text_index.search(query, top_k=self.candidates, document_filter=document_filter)
+        return visual_results, lexical_results
 
     def _fuse(
         self, query: str, visual: List[SearchResult], lexical: List[SearchResult], mode: str, top_k: int
