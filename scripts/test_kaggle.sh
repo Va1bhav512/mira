@@ -76,7 +76,7 @@ def run(cmd):
         raise SystemExit(f"FAILED: {cmd}")
 
 run("nvidia-smi --query-gpu=name,memory.total --format=csv")
-extras = "dev,generation,vidore" if MODE in ("vidore", "run") else "dev,generation"
+extras = {"vidore": "dev,generation,vidore", "run": "dev,generation,vidore,demo"}.get(MODE, "dev,generation")
 run(f"{sys.executable} -m pip install -q -e '.[{extras}]'")
 # Kaggle may ship an old torchao; transformers 5 refuses to load models with torchao < 0.16
 run(f"{sys.executable} -m pip uninstall -q -y torchao")
