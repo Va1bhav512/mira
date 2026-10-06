@@ -16,6 +16,7 @@ from PIL import Image
 
 from mira.evidence import Box, evidence_regions, heatmap, max_patch_region, render_region
 from mira.retrieval import HybridRetriever, PageEmbedding
+from mira.retrieval.hybrid import HybridResult
 
 # What the VLM sees: the whole page (no cropping), a box around the hottest patch
 # (single-patch baseline), or Query-Adaptive Evidence Cropping
@@ -47,6 +48,7 @@ class Answer:
     evidence: List[Evidence]
     raw: str  # unparsed VLM reply
     timings: Dict[str, float] = field(default_factory=dict)
+    hits: List[HybridResult] = field(default_factory=list)  # retrieved pages, with each channel's rank
 
 
 def page_boxes(query_embedding: np.ndarray, page: Optional[PageEmbedding], strategy: str) -> List[Box]:
@@ -111,4 +113,4 @@ def answer_query(
         {"document": e.document_id, "page": e.page_num, "bbox": [round(v, 4) for v in e.box]}
         for e in evidence if e.id in cited
     ]
-    return Answer(answer, sources, evidence, raw, {"retrieve": t1 - t0, "crop": t2 - t1, "generate": t3 - t2})
+    return Answer(answer, sources, evidence, raw, {"retrieve": t1 - t0, "crop": t2 - t1, "generate": t3 - t2}, hits)
