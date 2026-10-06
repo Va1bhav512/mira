@@ -27,10 +27,18 @@ VISUAL_CUES = frozenset("""
 WEIGHT_SHIFT = 0.5
 
 _IDENTIFIER = re.compile(r"""
-    0x[0-9a-f]+              # hex: 0x2D
-  | \w*[a-z]\w*\d\w*         # letters then digits: STM32F401RE, I2C, BME280
-  | \w*\d\w*[a-z]\w*         # digits then letters: 3V3, 74HC595
-  | \w+_\w+                  # snake/pin names: VDD_IO, USB_VBUS
+    (?i: 0x[0-9a-f]+         # hex: 0x2D
+       | \w*[a-z]\w*\d\w*      # letters then digits: STM32F401RE, I2C, BME280
+       | \w*\d\w*[a-z]\w*      # digits then letters: 3V3, 74HC595
+       | \w+_\w+ )             # snake/pin names: VDD_IO, USB_VBUS
+  | \b[A-Z]{5,}\b            # long all-caps register/signal names, case-sensitive: TXPOWER, PWRKEY (not EU, OECD)
+""", re.VERBOSE)
+
+# Letter+digit tokens that are quantities or dates, not part numbers: 2ns, 100mA, 1950s, 3rd, Q4, FY2024
+_NOT_IDENTIFIER = re.compile(r"""
+    \d+(\.\d+)?(ns|us|ms|s|hz|khz|mhz|ghz|mv|v|ma|ua|a|mw|w|kb|mb|gb|tb|bits?|mm|cm|km|kg|db|dbm|k|x)
+  | \d+(st|nd|rd|th|s)
+  | [qh][1-4] | fy\d+
 """, re.VERBOSE | re.IGNORECASE)
 
 
@@ -51,7 +59,9 @@ def query_weights(query: str) -> QueryWeights:
     Identifiers or quoted text -> lean lexical; figure/chart/table words -> lean visual.
     Both or neither -> equal weights.
     """
-    identifiers = [m.group() for m in _IDENTIFIER.finditer(query)]
+    identifiers = [
+        m.group() for m in _IDENTIFIER.finditer(query) if not _NOT_IDENTIFIER.fullmatch(m.group())
+    ]
     quoted = bool(re.search(r'"[^"]+"', query))
     cues = [w for w in re.findall(r"[a-z]+", query.lower()) if w in VISUAL_CUES]
 

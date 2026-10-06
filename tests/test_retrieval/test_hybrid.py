@@ -27,6 +27,16 @@ class TestQueryWeights:
         assert w.visual > w.lexical
         assert w.visual_cues == ["chart", "shows"]
 
+    def test_long_all_caps_signal_is_identifier(self):
+        assert query_weights("how long to hold PWRKEY low").identifiers == ["PWRKEY"]
+        assert query_weights("EU and OECD employment").identifiers == []  # short acronyms aren't
+
+    def test_quantities_and_dates_are_not_identifiers(self):
+        for q in ("access time with 2ns cache and 20ns memory", "languages from the 1950s",
+                  "productivity in q4 2024", "the 3rd quarter", "a 100mA load at 3.3V"):
+            assert query_weights(q).identifiers == [], q
+        assert query_weights("rails 3V3 and the BME280").identifiers == ["3V3", "BME280"]
+
     def test_both_or_neither_is_balanced(self):
         assert query_weights("block diagram of the RP2040").visual == 1.0
         assert query_weights("how does attention work").visual == 1.0
