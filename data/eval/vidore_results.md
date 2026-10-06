@@ -42,7 +42,27 @@ Zone F1 against V3 annotator boxes, on the gold pages (so retrieval is not a fac
 | computer_science | 1,049 | **0.303** | 0.059 | 0.208 |
 
 - The heatmap is about 4× better than the single-patch baseline, but **still below simply returning the whole page**. Gold zones are large (a whole-page box's F1 of 0.36 implies they cover ~22% of the page on average), so pixel F1 rewards big boxes.
-- The crop thresholds are untuned guesses, and the gap suggests boxes that are too small (low recall). Next: split heatmap F1 into precision and recall, then tune `THRESHOLD`/`MIN_SIZE`/`MAX_REGIONS` on one subset and report on another.
+- The crop thresholds are untuned guesses.
+
+**Precision/recall split** (computed locally from the evidence boxes in `generation_*.jsonl`, on retrieved pages that are gold and annotated; hr n=59, cs n=88):
+
+| Subset | Strategy | F1 | Precision | Recall | Gold area | Crop area |
+|---|---|---:|---:|---:|---:|---:|
+| hr | heatmap | 0.233 | 0.305 | 0.269 | 0.256 | 0.180 |
+| | max_patch | 0.040 | 0.235 | 0.024 | 0.264 | 0.022 |
+| computer_science | heatmap | 0.225 | 0.283 | 0.255 | 0.221 | 0.144 |
+| | max_patch | 0.061 | 0.269 | 0.039 | 0.213 | 0.022 |
+
+A randomly placed box has precision equal to the gold area fraction, and recall equal to its own area fraction. Against that baseline:
+- Heatmap precision is only ~1.2× chance, and recall ~1.5–1.8× chance.
+- The single hottest patch is **at or below chance**.
+
+So on real pages the heatmap barely localizes, and the boxes are also smaller than the gold zones (14–18% of the page vs 22–26%). Untuned thresholds alone don't explain a hottest patch that lands no better than a random one. Possible causes:
+1. "Attention-sink" patches (blank areas) that match every query token.
+2. Non-content query tokens (the prompt plus ColQwen's padding/augmentation tokens).
+3. A coordinate bug. The synthetic GPU test can't rule out a transposed grid, because its evidence sits in a corner that a transpose maps onto itself.
+
+Next: render heatmap overlays against the gold boxes for a few pages, and test a transposed-grid control and per-patch normalization.
 
 ## Generation (Phase 6), 50 queries per subset
 
