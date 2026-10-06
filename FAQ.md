@@ -421,15 +421,46 @@ H(r, c)   = Σ_i α_i · topk_i(S_i)(r, c)      # each token keeps only its top-
   No tokenizer or corpus statistics needed.
 - **Why top-k per token?** Without it, hundreds of weak background matches add up and swamp the
   real peak.
-- Then: threshold at 0.3 × max, dilate by one patch so a table split by whitespace joins one
+- **Blank patches are masked out first** (`ink_mask`, see the next question).
+- Then: threshold at 0.1 × max, dilate by one patch so a table split by whitespace joins one
   group, take connected components, keep the 2 with the most heat (dropping any under 25% of
-  the best), pad 2% and grow each side to ≥15% of the page (the VLM needs some context).
+  the best), pad 2% and grow each side to ≥25% of the page (the VLM needs some context).
 - Boxes are normalized `(x0, y0, x1, y1)` in [0, 1]. ColQwen's processor resizes the page
   without padding, so the patch grid spans the whole page.
 - Crops: PDFs re-render just the box at 300 DPI (`render_region`, PyMuPDF `clip`). Sources with
   no PDF, like ViDoRe page images, are cropped from the image (`crop_image`).
 
-All thresholds are hand-set, not tuned. Tuning them on V3 would mean tuning on the test set.
+The threshold and minimum crop size were tuned on ViDoRe V3 `hr` and checked on held-out
+`computer_science`. Report `hr` as the tuning subset.
+
+### Why did cropping first score at chance, and what fixed it?
+
+On V3, the hottest heatmap patch landed inside the annotators' zone **no more often than a random
+patch** (hr: 0.25 vs 0.27 chance). Rendering heatmaps over the pages showed why:
+
+- The matching words *did* light up ("green transition", "2030").
+- But **blank margins and whitespace lit up as strongly, for almost every query token**. These are
+  "sink" patches: in transformer vision encoders, empty regions tend to carry page-wide information
+  and end up similar to everything. They won each token's top-k and pulled the boxes into the margins.
+
+Ruled out on the way, each tested on the dumped embeddings:
+- a transposed patch grid (worse),
+- dropping prompt and padding query tokens (small gain),
+- subtracting the mean patch embedding (worse).
+
+The fix is `ink_mask()`: a patch whose pixels barely vary (std ≤ 8/255) can't hold evidence, so
+the heatmap scores only patches with ink. The mask is computed from the page image at index time
+and stored in the Qdrant payload, so query-time cropping needs no image.
+
+| Zone F1 (gold pages) | hr (tuning) | computer_science (held out) |
+|---|---:|---:|
+| before | 0.231 | 0.206 |
+| whole page (no crop) | 0.381 | 0.318 |
+| ink mask + tuned threshold/size | **0.495** | **0.418** |
+| human agreement | 0.602 | |
+
+The hottest patch now lands in the gold zone 60% of the time on hr, against 27% for chance.
+Reproduce with `scripts/dump_heatmaps.py` (GPU) and then `scripts/analyze_cropping.py` (CPU).
 
 ### How is cropping evaluated?
 
