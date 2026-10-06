@@ -15,8 +15,9 @@ import torch
 from PIL import Image
 
 PROMPT = """Answer the question using only the evidence images above. Each image is labelled [E1], [E2], ...
-Reply with JSON only: {{"answer": "<answer>", "evidence_ids": ["<ids of the images you used>"]}}
-If the evidence does not contain the answer, say so in "answer" and give an empty evidence_ids list.
+First list the labels of every image that contains information you use, then give the answer.
+Reply with JSON only: {{"evidence_ids": [<labels, e.g. "E1">], "answer": "<answer>"}}
+Use an empty evidence_ids list only if no image contains the answer, and then say so in "answer".
 
 Question: {query}"""
 
