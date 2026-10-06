@@ -82,8 +82,9 @@ def run_custom(args):
     per_query_ndcg = defaultdict(list)
     for q in queries:
         relevant = {(q["document_id"], p) for p in q["pages"]}
+        results = retriever.search_modes(q["query"], top_k=10, modes=tuple(args.modes))
         for mode in args.modes:
-            ranking = [(r.document_id, r.page_num) for r in retriever.search(q["query"], top_k=10, mode=mode)]
+            ranking = [(r.document_id, r.page_num) for r in results[mode]]
             for name, metric in METRICS.items():
                 value = metric(ranking, relevant)
                 scores[mode][q["type"]][name].append(value)
@@ -139,8 +140,9 @@ def run_vidore(args):
         buckets = {"ALL", f"format:{q['query_format']}"} | {f"content:{c}" for c in content_types}
         for b in buckets:
             bucket_counts[b] += 1
+        results = retriever.search_modes(q["query"], top_k=10, modes=tuple(args.modes))
         for mode in args.modes:
-            ranking = [(r.document_id, r.page_num) for r in retriever.search(q["query"], top_k=10, mode=mode)]
+            ranking = [(r.document_id, r.page_num) for r in results[mode]]
             for name, metric in VIDORE_METRICS.items():
                 value = metric(ranking, grades)
                 for b in buckets:

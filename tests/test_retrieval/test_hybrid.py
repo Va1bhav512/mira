@@ -81,6 +81,16 @@ def retriever(tmp_path):
 
 class TestHybridRetriever:
 
+    def test_search_modes_matches_search_with_one_query_embedding(self, retriever):
+        calls = []
+        embed = retriever.embedder.embed_query
+        retriever.embedder.embed_query = lambda q: calls.append(q) or embed(q)
+        query = "register 0x2D clock"
+        together = retriever.search_modes(query)
+        assert len(calls) == 1
+        for mode, results in together.items():
+            assert results == retriever.search(query, mode=mode)
+
     def test_single_channel_modes(self, retriever):
         assert retriever.search("register 0x2D", mode="visual")[0].page_num == 0
         assert retriever.search("register 0x2D", mode="lexical")[0].page_num == 1
