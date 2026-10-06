@@ -19,6 +19,9 @@ def test_parse_reply_falls_back_to_raw_text():
     assert parse_reply('{"answer": "x", "evidence_ids": "E1"}', ["E1"]) == ("x", [])
 
 
+DIM = 128  # the collection's vector size; newer qdrant-client rejects any other
+
+
 class StubEmbedder:
     def __init__(self, query):
         self.query = query
@@ -39,12 +42,12 @@ class StubGenerator:
 def retriever(tmp_path):
     """One indexed 10x10-patch page whose bottom-right 4x4 block matches the query token."""
     rng = np.random.default_rng(0)
-    q = rng.standard_normal(8)
+    q = rng.standard_normal(DIM)
     q /= np.linalg.norm(q)
-    patches = rng.standard_normal((10, 10, 8))
+    patches = rng.standard_normal((10, 10, DIM))
     patches[6:, 6:] = q
     patches /= np.linalg.norm(patches, axis=-1, keepdims=True)
-    emb = np.concatenate([rng.standard_normal((2, 8)), patches.reshape(100, 8)])  # 2 prompt tokens first
+    emb = np.concatenate([rng.standard_normal((2, DIM)), patches.reshape(100, DIM)])  # 2 prompt tokens first
 
     store = QdrantMultivectorStore(url=":memory:", collection_name="t")
     store.create_collection()
@@ -57,7 +60,7 @@ def retriever(tmp_path):
 def test_store_get_page_round_trip(retriever):
     page = retriever.store.get_page("doc", 3)
     assert page.patch_grid == (10, 10) and page.image_token_start == 2 and page.image_dims == (400, 400)
-    assert page.patch_embeddings.shape == (10, 10, 8)
+    assert page.patch_embeddings.shape == (10, 10, DIM)
     with pytest.raises(KeyError):
         retriever.store.get_page("doc", 4)
 
