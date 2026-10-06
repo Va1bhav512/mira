@@ -22,6 +22,11 @@ from .embeddings import PageEmbedding
 load_dotenv()
 
 
+def page_id(document_id: str, page_num: int) -> str:
+    """Qdrant point id for a page. Qdrant only accepts unsigned ints or UUIDs; uuid5 keeps re-indexing idempotent."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document_id}/page/{page_num}"))
+
+
 @dataclass
 class SearchResult:
     """Result from visual retrieval."""
@@ -123,8 +128,7 @@ class QdrantMultivectorStore:
         """
         points = [
             PointStruct(
-                # Qdrant only accepts unsigned ints or UUIDs; uuid5 keeps re-indexing idempotent
-                id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{emb.document_id}/page/{emb.page_num}")),
+                id=page_id(emb.document_id, emb.page_num),
                 vector=emb.embeddings.tolist(),
                 payload={
                     "document_id": emb.document_id,
@@ -200,6 +204,29 @@ class QdrantMultivectorStore:
         
         return search_results
     
+    def get_page(self, document_id: str, page_num: int) -> PageEmbedding:
+        """
+        Fetch one indexed page's stored multivector and layout, for evidence heatmaps.
+
+        Raises:
+            KeyError: if the page isn't indexed
+        """
+        points = self.client.retrieve(
+            self.collection_name, ids=[page_id(document_id, page_num)], with_vectors=True
+        )
+        if not points:
+            raise KeyError(f"page not indexed: {document_id} p{page_num}")
+        p = points[0].payload
+        return PageEmbedding(
+            document_id=document_id,
+            page_num=page_num,
+            embeddings=np.asarray(points[0].vector, dtype=np.float32),
+            patch_grid=(p["patch_grid"]["rows"], p["patch_grid"]["cols"]),
+            image_token_start=p["image_token_start"],
+            image_dims=(p["image_dims"]["width"], p["image_dims"]["height"]),
+            text_source=p["text_source"],
+        )
+
     def delete_document(self, document_id: str):
         """Delete all pages for a document."""
         from qdrant_client.models import Filter, FieldCondition, MatchValue
