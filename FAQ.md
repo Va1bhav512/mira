@@ -542,8 +542,6 @@ For a student project:
 
 Can compare 3B vs 7B in evaluation if hardware permits, but retrieval experiments (fusion, cropping) are more interesting.
 
----
-
 ### How do the API and demo work?
 
 `src/mira/serve.py` runs one process with both:
