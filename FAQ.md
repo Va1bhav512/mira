@@ -570,6 +570,17 @@ Writing the queries:
 - **Don't put the document name in every query.** "ADXL345 register 0x2D" is easy because "ADXL345" alone narrows it to one document. Mix in queries that don't name the part.
 - Label every page that answers the query, not just the first one you find.
 
+### How do we verify the custom set's labels?
+
+Claude wrote `queries.jsonl`, so a human check is what makes it count as evidence. For each line:
+1. Open `data/samples/<document_id>.pdf` at page **`pages[i] + 1`**: labels are 0-indexed, PDF viewers are 1-indexed.
+2. **Answer:** does that page actually answer the query?
+3. **Completeness:** search the PDF (Ctrl+F on the key terms) for *other* pages that also answer it. Missing pages make correct retrievals count as misses.
+4. **Other documents:** could a page in another PDF answer it too (e.g. the Cortex-M4 datasheet vs the STM32 one)? The labels only allow one document.
+5. **Type:** `identifier` names a part number, register, pin or signal; `visual` is answered by a figure or table; `semantic` is answered by prose.
+6. **Wording:** reject queries that copy a sentence from the page, since that inflates BM25.
+7. Record a verdict per line (`ok` / `wrong page` / `missing pages` / `other doc` / `wrong type` / `rewrite`), fix `queries.jsonl`, and re-run the eval. Report "N of 47 confirmed, M corrected".
+
 ### What is ablation testing and why important?
 
 Ablation removes components to test contribution:
