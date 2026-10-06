@@ -3,11 +3,15 @@
 # (uncommitted changes included). Kaggle runs the whole job as one batch kernel (up to 12 h,
 # not reclaimed mid-run like free Colab), so there are no stages or checkpoints here.
 #
-# Usage: scripts/test_kaggle.sh [--eval | --eval-vidore subset[,subset...]] [kernel-name]   (default: mira-gpu)
+# Usage: scripts/test_kaggle.sh [--eval | --eval-vidore subset[,subset...] | --run 'command']
+#                               [--dataset owner/slug]... [--no-tests] [kernel-name]   (default: mira-gpu)
 #   Default:       pytest + index/search example on test.pdf
 #   --eval:        pytest, index all of data/samples, eval_retrieval.py on all modes
 #   --eval-vidore: pytest, then per ViDoRe V3 subset: index, retrieval eval, cropping eval
 #                  (Phase 5) and generation on 50 queries (Phase 6)
+#   --run:         pytest, then a shell command in the repo, with $OUT (kept as kernel output,
+#                  downloaded to .cache/kaggle/<kernel-name>/), $CACHE (scratch) and Qdrant up
+#   --dataset:     mount an extra private Kaggle dataset under /kaggle/input
 #   Log saved to data/eval/kaggle_<mode>.log; generation answers to data/eval/generation_<subset>.jsonl.
 #
 # What goes to Kaggle (private):
@@ -19,10 +23,18 @@
 # Needs: kaggle CLI with an API token, a phone-verified account (kernels need internet).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MODE=test SUBSETS=""
-if [[ ${1:-} == --eval ]]; then MODE=eval; shift; fi
-if [[ ${1:-} == --eval-vidore ]]; then MODE=vidore; SUBSETS=${2:?subsets missing}; shift 2; fi
-N=${1:-mira-gpu}  # Kaggle titles need >= 5 chars
+MODE=test SUBSETS="" CMD="" TESTS=1 DATASETS="" N=mira-gpu  # Kaggle titles need >= 5 chars
+while (( $# )); do
+  case $1 in
+    --eval) MODE=eval ;;
+    --eval-vidore) MODE=vidore; SUBSETS=${2:?subsets missing}; shift ;;
+    --run) MODE=run; CMD=${2:?command missing}; shift ;;
+    --dataset) DATASETS+=", \"${2:?dataset missing}\""; shift ;;
+    --no-tests) TESTS=0 ;;
+    *) N=$1 ;;
+  esac
+  shift
+done
 USER_NAME=$(kaggle config view | awk '/username/ {print $3}')
 : "${USER_NAME:?no Kaggle username in kaggle config}"
 KERNEL="$USER_NAME/$N" SAMPLES="$USER_NAME/mira-samples"
@@ -44,7 +56,8 @@ fi
 git ls-files -co --exclude-standard | grep -vx '.env' | tar czf "$tmp/code.tgz" -T -
 mkdir "$tmp/kernel"
 {
-  echo "MODE, SUBSETS = '$MODE', '$SUBSETS'"
+  python3 -c 'import sys; print("MODE, SUBSETS, CMD, TESTS =", repr(sys.argv[1:4])[1:-1] + ",", sys.argv[4] == "1")' \
+    "$MODE" "$SUBSETS" "$CMD" "$TESTS"
   echo "CODE = '$(base64 -w0 "$tmp/code.tgz")'"
   cat <<'PY'
 import base64, glob, io, os, subprocess, sys, tarfile
@@ -63,11 +76,12 @@ def run(cmd):
         raise SystemExit(f"FAILED: {cmd}")
 
 run("nvidia-smi --query-gpu=name,memory.total --format=csv")
-extras = "dev,generation,vidore" if MODE == "vidore" else "dev,generation"
+extras = "dev,generation,vidore" if MODE in ("vidore", "run") else "dev,generation"
 run(f"{sys.executable} -m pip install -q -e '.[{extras}]'")
 # Kaggle may ship an old torchao; transformers 5 refuses to load models with torchao < 0.16
 run(f"{sys.executable} -m pip uninstall -q -y torchao")
-run(f"{sys.executable} -m pytest -v -rs tests")
+if TESTS:
+    run(f"{sys.executable} -m pytest -v -rs tests")
 
 # Qdrant server on the VM (single binary). With no .env, every store defaults to localhost:6333.
 run(f"mkdir -p {CACHE}/qdrant-bin && curl -sL https://github.com/qdrant/qdrant/releases/latest/download/"
@@ -88,6 +102,9 @@ elif MODE == "vidore":
         run(f"{py} scripts/eval_retrieval.py --vidore {s} {url} --bm25-path-vidore {bm25}")
         run(f"{py} scripts/eval_cropping.py --vidore {s} {url}")
         run(f"{py} scripts/eval_generation.py --vidore {s} {url} --bm25-path {bm25} --out {OUT}/generation_{s}.jsonl")
+elif MODE == "run":
+    os.environ.update(OUT=OUT, CACHE=CACHE)
+    run(CMD)
 else:
     run(f"{py} examples/index_and_search.py data/samples/test.pdf")
 print("\nALL PASSED", flush=True)
@@ -96,7 +113,7 @@ PY
 cat > "$tmp/kernel/kernel-metadata.json" <<JSON
 {"id": "$KERNEL", "title": "$N", "code_file": "run.py", "language": "python", "kernel_type": "script",
  "is_private": true, "enable_gpu": true, "enable_internet": true,
- "dataset_sources": ["$SAMPLES"], "competition_sources": [], "kernel_sources": []}
+ "dataset_sources": ["$SAMPLES"$DATASETS], "competition_sources": [], "kernel_sources": []}
 JSON
 kaggle kernels push -p "$tmp/kernel" --accelerator NvidiaTeslaT4
 echo "Running: https://www.kaggle.com/code/$KERNEL (live log on that page)"
@@ -117,6 +134,8 @@ kaggle kernels logs "$KERNEL" | python3 -c 'import json,sys; print("".join(c["da
 echo "Saved $log"
 if [[ $MODE == vidore ]]; then
   kaggle kernels output "$KERNEL" -p data/eval --file-pattern '^generation_.*\.jsonl$' -o -q && echo "Saved data/eval/generation_*.jsonl"
+elif [[ $MODE == run ]]; then
+  kaggle kernels output "$KERNEL" -p ".cache/kaggle/$N" -o -q && echo "Saved outputs to .cache/kaggle/$N/"
 fi
 tail -n 40 "$log"
 [[ $status == *COMPLETE ]] && grep -q "^ALL PASSED" "$log" || { echo "KAGGLE RUN FAILED ($status)"; exit 1; }
