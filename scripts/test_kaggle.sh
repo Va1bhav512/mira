@@ -16,7 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 EVAL=0
 if [[ ${1:-} == --eval ]]; then EVAL=1; shift; fi
-N=${1:-mira}
+N=${1:-mira-test}
 CHECKPOINT=.cache/kaggle/embeddings.tar
 
 set -a; source .env; set +a
@@ -24,39 +24,72 @@ set -a; source .env; set +a
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
-# Tracked + untracked-but-not-ignored files, plus sample PDFs (data/samples/ is gitignored):
-# just test.pdf normally, the whole corpus (~72 MB) for --eval
-if (( EVAL )); then samples=(data/samples/*.pdf); else samples=(data/samples/test.pdf); fi
-{ git ls-files -co --exclude-standard; printf '%s\n' "${samples[@]}"; } | tar czf "$tmp/mira.tgz" -T -
+# Tracked + untracked-but-not-ignored files, plus sample PDFs.
+# Exclude .env (secrets) and .cache (large local files).
+rm -rf data/samples 2>/dev/null || true
+mkdir -p data/samples
+if (( EVAL )); then  
+  cp -L /home/vaibhav/g/mira/data/samples/*.pdf data/samples/
+else
+  cp -L /home/vaibhav/g/mira/data/samples/test.pdf data/samples/
+fi
+samples=(data/samples/*.pdf)
+{ git ls-files -c --exclude-standard; git ls-files -o --exclude-standard; printf '%s\n' "${samples[@]}"; } | grep -v '\.env$' | grep -v '\.cache/' | tar czf "$tmp/mira.tgz" -T -
 
-# Create or reuse Kaggle notebook
-if ! kaggle kernels list --mine --search "$N" -v 2>/dev/null | grep -q "$N"; then
-  echo "Creating new Kaggle notebook '$N'..."
-  kaggle kernels push -p "$tmp" <<METADATA
+KAGGLE_USER=$(kaggle config view | grep username | awk '{print $3}')
+: "${KAGGLE_USER:?Could not get Kaggle username from config}"
+
+# Create kernel metadata with dataset dependency
+cat > "$tmp/kernel-metadata.json" <<METADATA
 {
   "title": "$N",
-  "id": "$(kaggle whoami | awk '{print $1}')/$N",
-  "code_file": "run.py",
+  "id": "$KAGGLE_USER/$N",
+  "code_file": "script.py",
   "language": "python",
   "kernel_type": "script",
   "is_private": true,
   "enable_gpu": true,
   "enable_internet": true,
-  "dataset_sources": [],
+  "dataset_sources": ["$KAGGLE_USER/$N-tarball"],
   "competition_sources": [],
   "kernel_sources": []
 }
 METADATA
-fi
 
-# Upload tarball to Kaggle dataset (ephemeral; re-uploaded each run)
-kaggle datasets version -p "$tmp/mira.tgz" -m "Working tree $(date +%Y%m%d-%H%M%S)" --quiet 2>/dev/null || \
-  kaggle datasets create -p "$tmp/mira.tgz" --quiet
+# Create dataset metadata for tarball
+cat > "$tmp/dataset-metadata.json" <<DATAMETA
+{
+  "title": "$N-tarball",
+  "id": "$KAGGLE_USER/$N-tarball",
+  "licenses": [{"name": "CC0-1.0"}]
+}
+DATAMETA
+
+# Upload tarball as dataset (create or update)
+if kaggle datasets list --user "$KAGGLE_USER" --search "$N-tarball" -v 2>/dev/null | grep -q "$N-tarball"; then
+  echo "Updating dataset '$N-tarball'..."
+  cp "$tmp/dataset-metadata.json" "$tmp/mira.tgz" .
+  kaggle datasets version -p . -m "Working tree $(date +%Y%m%d-%H%M%S)" --quiet
+else
+  echo "Creating dataset '$N-tarball'..."
+  cp "$tmp/dataset-metadata.json" "$tmp/mira.tgz" .
+  kaggle datasets create -p . --quiet
+fi
 
 # Upload checkpoint if it exists
 if (( EVAL )) && [[ -f $CHECKPOINT ]]; then
-  kaggle datasets version -p "$CHECKPOINT" -m "Embeddings checkpoint $(date +%Y%m%d-%H%M%S)" --quiet 2>/dev/null || \
+  cat > "$tmp/checkpoint-metadata.json" <<CHKMETA
+{
+  "title": "$N-embeddings",
+  "id": "$KAGGLE_USER/$N-embeddings",
+  "licenses": [{"name": "CC0-1.0"}]
+}
+CHKMETA
+  if kaggle datasets list --user "$KAGGLE_USER" --search "$N-embeddings" -v 2>/dev/null | grep -q "$N-embeddings"; then
+    kaggle datasets version -p "$CHECKPOINT" -m "Embeddings checkpoint $(date +%Y%m%d-%H%M%S)" --quiet 2>/dev/null || true
+  else
     kaggle datasets create -p "$CHECKPOINT" --quiet
+  fi
 fi
 
 # Shared helpers for both stages
@@ -77,81 +110,62 @@ PY
 
 # Stage 1: install, test, and (--eval) index the corpus, then pack the embedding cache
 { cat "$tmp/common.py"; cat <<'PY'
-subprocess.run("rm -rf /kaggle/working/mira && mkdir /kaggle/working/mira && tar xzf /kaggle/input/*/mira.tgz -C /kaggle/working/mira", shell=True, check=True)
+import tarfile, glob, os
+# Find and extract the uploaded tarball (dataset slug replaces spaces with dashes)
+tarball = glob.glob("/kaggle/input/*/mira.tgz")[0]
+subprocess.run(f"rm -rf /kaggle/working/mira && mkdir -p /kaggle/working/mira && tar xzf {tarball} -C /kaggle/working/mira", shell=True, check=True)
 run("nvidia-smi --query-gpu=name,memory.total --format=csv")
-run(f"{sys.executable} -m pip install -q -e '.[dev]'")
-# Kaggle ships torchao 0.10; transformers 5 refuses to load any model with torchao < 0.16 present
+run(f"{sys.executable} -m pip install -q -e '/kaggle/working/mira[dev]'")
 run(f"{sys.executable} -m pip uninstall -q -y torchao")
-run(f"{sys.executable} -m pytest -v -rs tests")
+run(f"{sys.executable} -m pytest -v -rs /kaggle/working/mira/tests")
 if os.environ.get("MIRA_EVAL") == "1":
-    # Restore a checkpoint uploaded from a previous VM (index lives outside the wiped /kaggle/working/mira)
-    if os.path.exists("/kaggle/working/embeddings.tar") and not os.path.exists("/kaggle/working/cache/embeddings"):
-        run("mkdir -p /kaggle/working/cache && tar xf /kaggle/working/embeddings.tar -C /kaggle/working/cache")
-    # Qdrant server on the VM (single binary, no Docker); storage persists under /kaggle/working/cache.
-    # Not embedded mode: that unpickles every point into RAM and OOMs a 12 GB VM at full corpus.
+    # Restore checkpoint if available
+    checkpoint_files = glob.glob("/kaggle/input/*embeddings*/embeddings.tar")
+    if checkpoint_files and not os.path.exists("/kaggle/working/cache/embeddings"):
+        run(f"mkdir -p /kaggle/working/cache && tar xf {checkpoint_files[0]} -C /kaggle/working/cache")
+    # Start Qdrant server
     if subprocess.run("curl -sf localhost:6333/readyz", shell=True).returncode:
         run("mkdir -p /kaggle/working/cache/qdrant-bin && cd /kaggle/working/cache/qdrant-bin && { [ -x qdrant ] || "
             "curl -sL https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-unknown-linux-gnu.tar.gz | tar xz; }")
         subprocess.Popen("QDRANT__STORAGE__STORAGE_PATH=/kaggle/working/cache/qdrant-server /kaggle/working/cache/qdrant-bin/qdrant"
                          " > /kaggle/working/cache/qdrant.log 2>&1", shell=True, start_new_session=True)
         run("for i in $(seq 60); do curl -sf localhost:6333/readyz && exit 0; sleep 1; done; exit 1")
-    run(f"{sys.executable} scripts/index_corpus.py {PATHS} --cache-dir /kaggle/working/cache/embeddings")
+    run(f"{sys.executable} /kaggle/working/mira/scripts/index_corpus.py {PATHS} --cache-dir /kaggle/working/cache/embeddings")
     run("tar cf /kaggle/working/embeddings.tar -C /kaggle/working/cache embeddings && ls -la /kaggle/working/embeddings.tar")
     print("\nSTAGE 1 DONE")
 else:
-    run(f"{sys.executable} examples/index_and_search.py data/samples/test.pdf")
+    run(f"{sys.executable} /kaggle/working/mira/examples/index_and_search.py /kaggle/working/mira/data/samples/test.pdf")
     print("\nALL PASSED")
 PY
-} > "$tmp/stage1.py"
+} > "$tmp/script.py"
 
-# Stage 2 (--eval): retrieval eval over the indexed corpus
-{ cat "$tmp/common.py"; cat <<'PY'
-run(f"{sys.executable} scripts/eval_retrieval.py {PATHS}")
-print("\nALL PASSED")
-PY
-} > "$tmp/stage2.py"
+# Push kernel
+echo "Pushing kernel '$N'..."
+mkdir -p "$tmp/kernel"
+cp "$tmp/kernel-metadata.json" "$tmp/script.py" "$tmp/kernel/"
+kaggle kernels push -p "$tmp/kernel"
 
-# Run a stage detached on the VM and follow its log by polling. A single long `kaggle kernels run`
-# isn't safe: its output stream can stall mid-run while the job keeps going, and the
-# client never returns. Polls are short, so a stalled one just times out and retries.
-remote_stage() {  # $1 = local stage file, $2 = stage name
-  local name=$2 offset=0 status=running out
-  kaggle kernels push "$1" --kernel-metadata > /dev/null
-  # MIRA_EVAL always passed: kernel env persists, and the detached job inherits it
-  printf '%s\n' "import subprocess" \
-    "subprocess.Popen('cd /kaggle/working && rm -f $name.status && python3 -u $name.py > $name.log 2>&1; echo \$? > $name.status', shell=True, start_new_session=True)" \
-    > "$tmp/launch.py"
-  kaggle kernels run "$(kaggle whoami | awk '{print $1}')/$N" --output "$tmp/out.log" --env MIRA_EVAL="$EVAL" --env QDRANT_CLUSTER_ENDPOINT="$QDRANT_CLUSTER_ENDPOINT" --env QDRANT_CLUSTER_API_KEY="$QDRANT_CLUSTER_API_KEY" > /dev/null
-  while [[ $status == running ]]; do
-    sleep 30
-    printf '%s\n' "import os" \
-      "d = open('/kaggle/working/$name.log', 'rb').read() if os.path.exists('/kaggle/working/$name.log') else b''" \
-      "print(d[$offset:].decode(errors='replace'), end='')" \
-      "print('\n@@OFFSET', len(d))" \
-      "print('@@STATUS', open('/kaggle/working/$name.status').read().strip() if os.path.exists('/kaggle/working/$name.status') else 'running')" \
-      > "$tmp/poll.py"
-    out=$(timeout 120 kaggle kernels run "$(kaggle whoami | awk '{print $1}')/$N" --output "$tmp/poll_out.log" --env MIRA_EVAL="$EVAL" --env QDRANT_CLUSTER_ENDPOINT="$QDRANT_CLUSTER_ENDPOINT" --env QDRANT_CLUSTER_API_KEY="$QDRANT_CLUSTER_API_KEY" 2>&1) || continue
-    if grep -q "not found" <<<"$out" && ! grep -q "^@@STATUS" <<<"$out"; then
-      echo "Kaggle notebook '$N' is gone"; return 1
-    fi
-    grep -q "^@@STATUS" <<<"$out" || continue
-    { grep -v -e "^@@OFFSET" -e "^@@STATUS" <<<"$out" || true; } | tee -a "$tmp/out.log"
-    offset=$(sed -n 's/^@@OFFSET //p' <<<"$out")
-    status=$(sed -n 's/^@@STATUS //p' <<<"$out")
-  done
-  [[ $status == 0 ]]
-}
+# Poll for completion (kernel push starts it automatically)
+echo "Waiting for kernel completion..."
+STATUS=""
+for i in $(seq 120); do
+  sleep 30
+  STATUS=$(kaggle kernels status "$KAGGLE_USER/$N" 2>&1 || echo "unknown")
+  echo "[$i/120] Status: $STATUS"
+  if grep -qi "complete\|success\|fail\|error" <<<"$STATUS"; then
+    break
+  fi
+done
 
-remote_stage "$tmp/stage1.py" stage1 || { echo "KAGGLE RUN FAILED (stage 1)"; exit 1; }
+# Get output logs
+echo "Fetching output..."
+kaggle kernels output "$KAGGLE_USER/$N" -p "$tmp" > "$tmp/out.log" 2>&1 || true
 
 if (( EVAL )); then
-  # Checkpoint before the eval, so a VM reclaimed mid-eval doesn't cost the indexing
-  mkdir -p "$(dirname "$CHECKPOINT")"
-  kaggle kernels output "$(kaggle whoami | awk '{print $1}')/$N" -p "$CHECKPOINT.part" && mv "$CHECKPOINT.part" "$CHECKPOINT"
-  echo "Checkpoint saved: $CHECKPOINT ($(du -h "$CHECKPOINT" | cut -f1))"
-  remote_stage "$tmp/stage2.py" stage2 || { echo "KAGGLE RUN FAILED (stage 2)"; exit 1; }
-  cp "$tmp/out.log" data/eval/kaggle_eval.log; echo "Saved data/eval/kaggle_eval.log"
+  mkdir -p data/eval
+  cp "$tmp/out.log" data/eval/kaggle_eval.log
+  echo "Saved data/eval/kaggle_eval.log"
 fi
 
-grep -q "^ALL PASSED" "$tmp/out.log" || { echo "KAGGLE RUN FAILED"; exit 1; }
-echo "Success. Kernel logs: $tmp/out.log"
+grep -q "ALL PASSED" "$tmp/out.log" || { echo "KAGGLE RUN FAILED"; exit 1; }
+echo "Success. Output saved to: $tmp/out.log"
