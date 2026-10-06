@@ -36,6 +36,11 @@ vidore = [
 generation = [
     "bitsandbytes>=0.45.0",
 ]
+demo = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "gradio>=5.0.0",
+]
 
 [tool.pytest.ini_options]
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
