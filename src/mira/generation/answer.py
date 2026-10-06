@@ -55,7 +55,7 @@ def page_boxes(query_embedding: np.ndarray, page: Optional[PageEmbedding], strat
     """Evidence boxes on one page under a context strategy (page may be None for "page")."""
     if strategy == "page":
         return [FULL_PAGE]
-    heat = heatmap(query_embedding, page.patch_embeddings)
+    heat = heatmap(query_embedding, page.patch_embeddings, content=page.content_mask)
     if strategy == "max_patch":
         return [max_patch_region(heat).box]
     if strategy == "heatmap":

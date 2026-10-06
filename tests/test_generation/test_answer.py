@@ -61,6 +61,7 @@ def test_store_get_page_round_trip(retriever):
     page = retriever.store.get_page("doc", 3)
     assert page.patch_grid == (10, 10) and page.image_token_start == 2 and page.image_dims == (400, 400)
     assert page.patch_embeddings.shape == (10, 10, DIM)
+    assert page.content_mask is None  # stored without one
     with pytest.raises(KeyError):
         retriever.store.get_page("doc", 4)
 

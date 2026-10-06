@@ -14,9 +14,10 @@ patch grid spans the whole page and patch (r, c) covers [c/cols, (c+1)/cols] x [
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
+from PIL import Image
 from scipy import ndimage
 
 Box = Tuple[float, float, float, float]  # normalized (x0, y0, x1, y1)
@@ -28,6 +29,7 @@ MAX_REGIONS = 2
 MIN_MASS = 0.25      # drop regions with less than this fraction of the best region's heat
 PAD = 0.02           # padding added on each side, as a fraction of the page
 MIN_SIZE = 0.15      # smallest crop side, as a fraction of the page: the VLM needs context
+INK_STD = 8.0        # pixel std (0-255) above which a patch counts as having ink
 
 
 @dataclass
@@ -36,23 +38,40 @@ class Region:
     score: float  # summed heat in the region
 
 
-def heatmap(query: np.ndarray, patches: np.ndarray, top_k: int = TOP_K) -> np.ndarray:
+def ink_mask(image: Image.Image, grid: Tuple[int, int], min_std: float = INK_STD) -> np.ndarray:
+    """
+    [rows, cols] True where the page has ink. Blank patches (margins, whitespace) can't hold
+    evidence, yet ColQwen's embeddings for them match almost any query token ("sink" patches),
+    so the heatmap must ignore them.
+    """
+    rows, cols = grid
+    cell = 8
+    pixels = np.asarray(image.convert("L").resize((cols * cell, rows * cell), Image.BILINEAR), dtype=np.float32)
+    return pixels.reshape(rows, cell, cols, cell).std(axis=(1, 3)) > min_std
+
+
+def heatmap(query: np.ndarray, patches: np.ndarray, top_k: int = TOP_K, content: Optional[np.ndarray] = None) -> np.ndarray:
     """
     Args:
         query: Query token embeddings [n_tokens, dim]
         patches: Page patch embeddings [rows, cols, dim] (PageEmbedding.patch_embeddings)
         top_k: Patches kept per query token
+        content: Optional [rows, cols] mask of patches that may hold evidence (ink_mask);
+            the others get no heat and don't compete for a token's top-k
 
     Returns:
         H [rows, cols], scaled so its max is 1 (all zeros if nothing matched)
     """
     rows, cols, dim = patches.shape
-    sims = query @ patches.reshape(-1, dim).T  # [n_tokens, rows*cols]
+    flat = patches.reshape(-1, dim)
+    keep = content.reshape(-1) if content is not None and content.any() else np.ones(len(flat), bool)
+    sims = query @ flat[keep].T  # [n_tokens, kept patches]
     alpha = sims.max(axis=1) - sims.mean(axis=1)
 
     k = min(top_k, sims.shape[1])
     kth = np.partition(sims, -k, axis=1)[:, -k][:, None]
-    heat = (alpha[:, None] * np.where(sims >= kth, sims.clip(min=0), 0.0)).sum(axis=0)
+    heat = np.zeros(len(flat))
+    heat[keep] = (alpha[:, None] * np.where(sims >= kth, sims.clip(min=0), 0.0)).sum(axis=0)
     peak = heat.max()
     return (heat / peak if peak > 0 else heat).reshape(rows, cols)
 

@@ -4,6 +4,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from mira.evidence import evidence_regions, heatmap
+from mira.evidence.localize import ink_mask
 from mira.retrieval import PageEmbedding
 
 
@@ -19,15 +20,16 @@ def test_heatmap_finds_the_paragraph():
     font = ImageFont.load_default(size=28)
     draw.text((60, 80), "Annual Report: Company Overview", fill="black", font=font)
     draw.text((60, 160), "Our offices are open Monday to Friday.", fill="black", font=font)
-    # Evidence in the bottom-right quarter
-    draw.text((470, 850), "Battery capacity:", fill="black", font=font)
-    draw.text((470, 900), "5000 mAh lithium", fill="black", font=font)
+    # Evidence near the top-right: a transposed patch grid would map it to the bottom-left
+    draw.text((470, 300), "Battery capacity:", fill="black", font=font)
+    draw.text((470, 350), "5000 mAh lithium", fill="black", font=font)
 
     embedder = ColQwenEmbedder()
     (emb, grid, start), = embedder.embed_images([page])
     patches = PageEmbedding("d", 0, emb, grid, start, page.size, "native").patch_embeddings
-    regions = evidence_regions(heatmap(embedder.embed_query("What is the battery capacity?"), patches))
+    content = ink_mask(page, grid)
+    regions = evidence_regions(heatmap(embedder.embed_query("What is the battery capacity?"), patches, content=content))
 
     x0, y0, x1, y1 = regions[0].box
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    assert cx > 0.5 and cy > 0.6, regions
+    assert cx > 0.5 and 0.2 < cy < 0.45, regions

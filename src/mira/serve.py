@@ -92,7 +92,8 @@ class Mira:
         for hit in result["retrieved"]:
             doc, page = hit["document"], hit["page"]
             image = render_region(str(self.pdf_dir / f"{doc}.pdf"), page, FULL_PAGE, dpi=DISPLAY_DPI)
-            heat = heatmap(query_embedding, self.retriever.store.get_page(doc, page).patch_embeddings)
+            stored = self.retriever.store.get_page(doc, page)
+            heat = heatmap(query_embedding, stored.patch_embeddings, content=stored.content_mask)
             boxes = [e["bbox"] for e in result["evidence"] if (e["document"], e["page"]) == (doc, page)]
             ranks = f"visual #{hit['visual_rank'] or '-'}, BM25 #{hit['lexical_rank'] or '-'}"
             views.append((overlay(image, heat, boxes), f"{doc} p.{page + 1} ({ranks})"))

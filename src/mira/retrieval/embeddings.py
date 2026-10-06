@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 import json
 
+from mira.evidence.localize import ink_mask
 from mira.pdf import ProcessedPage
 from .colqwen import ColQwenEmbedder
 
@@ -18,6 +19,7 @@ class PageEmbedding:
     image_token_start: int  # embeddings[start:start+rows*cols] is the patch grid
     image_dims: Tuple[int, int]  # (width, height)
     text_source: str
+    content_mask: Optional[np.ndarray] = None  # [rows, cols] True where the page has ink (evidence.ink_mask)
 
     @property
     def patch_embeddings(self) -> np.ndarray:
@@ -81,6 +83,9 @@ def generate_embeddings(
             if cache_path:
                 _save_to_cache(cache_path, page_emb)
 
+    # Computed from the image every time (cheap), so pages cached before masks existed get one too
+    for page in pages:
+        results[page.page_num].content_mask = ink_mask(page.image, results[page.page_num].patch_grid)
     return [results[p.page_num] for p in pages]
 
 

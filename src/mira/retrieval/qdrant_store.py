@@ -137,6 +137,8 @@ class QdrantMultivectorStore:
                     "patch_grid": {"rows": emb.patch_grid[0], "cols": emb.patch_grid[1]},
                     "image_token_start": emb.image_token_start,
                     "image_dims": {"width": emb.image_dims[0], "height": emb.image_dims[1]},
+                    # rows*cols "0"/"1" string, row-major: which patches have ink (blank ones are heatmap sinks)
+                    "content_mask": None if emb.content_mask is None else "".join("01"[int(b)] for b in emb.content_mask.ravel()),
                     "native_text": text[:10000],  # Limit text size
                 },
             )
@@ -225,6 +227,8 @@ class QdrantMultivectorStore:
             image_token_start=p["image_token_start"],
             image_dims=(p["image_dims"]["width"], p["image_dims"]["height"]),
             text_source=p["text_source"],
+            content_mask=None if not p.get("content_mask")
+            else np.frombuffer(p["content_mask"].encode(), np.uint8).reshape(p["patch_grid"]["rows"], -1) == ord("1"),
         )
 
     def delete_document(self, document_id: str):

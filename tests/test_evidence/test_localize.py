@@ -3,9 +3,11 @@
 import numpy as np
 import pymupdf
 import pytest
+from PIL import Image
 
 from mira.evaluation import zone_f1
 from mira.evidence import crop_image, evidence_regions, heatmap, max_patch_region, render_region, to_pixels
+from mira.evidence.localize import ink_mask
 
 DIM = 16
 
@@ -111,3 +113,24 @@ def test_zone_f1():
     assert zone_f1([(0, 0, 10, 10)], [[(10, 10, 20, 20)], [(5, 0, 15, 10)]], 20, 20) == 0.5
     # an annotator's boxes merge into one zone (overlap counted once)
     assert zone_f1([(0, 0, 10, 10)], [[(0, 0, 10, 10), (0, 0, 5, 5)]], 20, 20) == 1.0
+
+
+def test_ink_mask_marks_text_not_margins():
+    from PIL import ImageDraw
+    page = Image.new("RGB", (400, 400), "white")
+    ImageDraw.Draw(page).text((210, 20), "Battery 5000 mAh", fill="black")
+    mask = ink_mask(page, (4, 4))
+    assert mask[0, 2] and not mask[3, 0]
+
+
+def test_content_mask_stops_a_blank_sink_patch_winning():
+    rng = np.random.default_rng(1)
+    q = rng.standard_normal((3, 16))
+    patches = rng.standard_normal((4, 4, 16)) * 0.1
+    patches[0, 0] = q.sum(axis=0)          # "sink": a blank margin patch matching every token
+    patches[2, 3] = q.sum(axis=0) * 0.8    # the real evidence
+    content = np.ones((4, 4), bool)
+    content[0, 0] = False
+    assert np.unravel_index(heatmap(q, patches).argmax(), (4, 4)) == (0, 0)
+    masked = heatmap(q, patches, content=content)
+    assert np.unravel_index(masked.argmax(), (4, 4)) == (2, 3) and masked[0, 0] == 0
