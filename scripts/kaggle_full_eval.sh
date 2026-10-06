@@ -15,6 +15,9 @@ URL="--qdrant-url http://localhost:6333"
 SUBSETS=${SUBSETS:-hr computer_science pharmaceuticals}
 GEN_LIMIT=${GEN_LIMIT:-60}
 mkdir -p "$CACHE" "$OUT/index"
+# Evals after indexing are allowed to fail without losing the steps after them; the run still fails at the end
+failed=0
+try() { "$@" || { echo "STEP FAILED: $*"; failed=1; }; }
 
 # Kaggle extracts uploaded tarballs, so the checkpoint dataset mounts as an embeddings/ folder
 emb=$(find /kaggle/input -type d -name embeddings 2>/dev/null | head -1)
@@ -28,16 +31,17 @@ ls -la "$OUT/index"
 for s in $SUBSETS; do
   bm25="$CACHE/bm25_vidore/$s"
   python scripts/index_vidore.py --subset "$s" $URL --bm25-path "$bm25" --cache-dir "$CACHE/embeddings_vidore/$s"
-  python scripts/eval_retrieval.py --vidore "$s" $URL --bm25-path-vidore "$bm25" --dump-rankings "$OUT/rankings_$s.jsonl"
-  python scripts/eval_cropping.py --vidore "$s" $URL
-  python scripts/eval_generation.py --vidore "$s" $URL --bm25-path "$bm25" --limit "$GEN_LIMIT" --out "$OUT/generation_$s.jsonl"
+  try python scripts/eval_retrieval.py --vidore "$s" $URL --bm25-path-vidore "$bm25" --dump-rankings "$OUT/rankings_$s.jsonl"
+  try python scripts/eval_cropping.py --vidore "$s" $URL
+  try python scripts/eval_generation.py --vidore "$s" $URL --bm25-path "$bm25" --limit "$GEN_LIMIT" --out "$OUT/generation_$s.jsonl"
 done
 
-python scripts/judge_answers.py "$OUT"/generation_*.jsonl
+try python scripts/judge_answers.py "$OUT"/generation_*.jsonl
 
 # Demo end to end on the GPU: API + UI over the custom corpus (overlays saved for inspection)
 python -m mira.serve --qdrant-url http://localhost:6333 --bm25-path "$OUT/index/bm25" > "$OUT/serve.log" 2>&1 &
 server=$!
 for _ in $(seq 120); do curl -sf localhost:7860/docs >/dev/null && break; sleep 5; done
-python scripts/demo_smoke.py --out "$OUT/demo_smoke"
+try python scripts/demo_smoke.py --out "$OUT/demo_smoke"
 kill $server
+exit $failed
