@@ -205,6 +205,39 @@ uv run python scripts/phase1_report.py
 
 ColQwen tests skip locally unless the GPU has >=10 GB VRAM.
 
+### GPU runs on Kaggle (recommended: 30 GPU-h/week, 12 h sessions, no mid-run reclaim)
+
+```bash
+scripts/test_kaggle.sh                                    # pytest + example on a T4
+scripts/test_kaggle.sh --eval-vidore hr,computer_science  # ViDoRe retrieval/cropping/generation
+scripts/test_kaggle.sh --dataset <you>/mira-custom-embeddings \
+    --run 'bash scripts/kaggle_full_eval.sh' mira-full    # everything, + the demo index
+kaggle quota                                              # GPU hours left this week
+```
+
+Code travels inside the kernel; only `data/samples` goes up, once, as a private dataset. Qdrant runs
+on the VM, so no credentials leave your machine. Logs go to `data/eval/kaggle_<mode>.log`, and
+`--run` outputs to `.cache/kaggle/<kernel>/`.
+
+### API and demo
+
+```bash
+# On a GPU box with the custom corpus indexed (scripts/index_corpus.py):
+uv sync --extra generation --extra demo
+uv run python -m mira.serve --qdrant-url http://localhost:6333 --bm25-path .cache/bm25
+#   POST /query  {"question": "...", "mode": "adaptive", "strategy": "heatmap"}
+#   /ui          Gradio demo: answer + citations, retrieved pages with heatmap and evidence
+#                boxes, the crops the VLM read, visual/BM25 ranks and fusion weights
+```
+
+On Kaggle, run the demo in a notebook (GPU T4, Internet on, inputs `<you>/mira-samples` and the
+`mira-full` notebook output):
+
+```
+!git clone -q --depth 1 https://github.com/Va1bhav512/mira /kaggle/working/mira
+!bash /kaggle/working/mira/scripts/kaggle_demo.sh     # prints a public gradio.live link
+```
+
 ---
 
 ## Technology Stack
