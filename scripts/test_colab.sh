@@ -152,7 +152,9 @@ remote_stage() {  # $1 = local stage file, $2 = stage name
       "print('\n@@OFFSET', len(d))" \
       "print('@@STATUS', open('/content/$name.status').read().strip() if os.path.exists('/content/$name.status') else 'running')" \
       > "$tmp/poll.py"
-    out=$(timeout 120 colab exec -s "$S" -f "$tmp/poll.py" --timeout 60 2>&1) || continue
+    # A failed poll is retried, unless the session itself is gone (checked first: a reclaimed
+    # VM also makes exec fail, and skipping on failure alone would poll forever)
+    out=$(timeout 120 colab exec -s "$S" -f "$tmp/poll.py" --timeout 60 2>&1) || true
     if grep -q "not found" <<<"$out" && ! grep -q "^@@STATUS" <<<"$out"; then
       echo "Colab session '$S' is gone"; return 1
     fi
@@ -164,21 +166,30 @@ remote_stage() {  # $1 = local stage file, $2 = stage name
   [[ $status == 0 ]]
 }
 
+# Download a VM file to a local checkpoint. Large downloads sometimes break mid-stream
+# (IncompleteRead), so retry; a failure is reported but doesn't stop the eval.
+checkpoint() {  # $1 = remote path, $2 = local path
+  mkdir -p "$(dirname "$2")"
+  for attempt in 1 2 3; do
+    if colab download -s "$S" "$1" "$2.part" && mv "$2.part" "$2"; then
+      echo "Checkpoint saved: $2 ($(du -h "$2" | cut -f1))"; return 0
+    fi
+    echo "Checkpoint download failed (attempt $attempt/3)"
+  done
+  rm -f "$2.part"; echo "WARNING: checkpoint NOT saved: $2"
+}
+
 remote_stage "$tmp/stage1.py" stage1 || { echo "COLAB RUN FAILED (stage 1)"; exit 1; }
 
 if (( EVAL )); then
   # Checkpoint before the eval, so a VM reclaimed mid-eval doesn't cost the indexing
-  mkdir -p "$(dirname "$CHECKPOINT")"
-  colab download -s "$S" /content/embeddings.tar "$CHECKPOINT.part" && mv "$CHECKPOINT.part" "$CHECKPOINT"
-  echo "Checkpoint saved: $CHECKPOINT ($(du -h "$CHECKPOINT" | cut -f1))"
+  checkpoint /content/embeddings.tar "$CHECKPOINT"
   remote_stage "$tmp/stage2.py" stage2 || { echo "COLAB RUN FAILED (stage 2)"; exit 1; }
   cp "$tmp/out.log" data/eval/colab_eval.log; echo "Saved data/eval/colab_eval.log"
 fi
 
 if [[ -n $VIDORE_SUBSETS ]]; then
-  mkdir -p "$(dirname "$VIDORE_CHECKPOINT")"
-  colab download -s "$S" /content/embeddings_vidore.tar "$VIDORE_CHECKPOINT.part" && mv "$VIDORE_CHECKPOINT.part" "$VIDORE_CHECKPOINT"
-  echo "Checkpoint saved: $VIDORE_CHECKPOINT ($(du -h "$VIDORE_CHECKPOINT" | cut -f1))"
+  checkpoint /content/embeddings_vidore.tar "$VIDORE_CHECKPOINT"
   remote_stage "$tmp/stage2v.py" stage2v || { echo "COLAB RUN FAILED (stage 2)"; exit 1; }
   cp "$tmp/out.log" data/eval/vidore_eval.log; echo "Saved data/eval/vidore_eval.log"
 fi
