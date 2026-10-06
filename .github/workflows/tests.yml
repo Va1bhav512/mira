@@ -1,0 +1,18 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cpu-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      # GPU tests skip themselves; tests needing data/samples (gitignored PDFs) skip too
+      - run: uv sync --all-extras
+      - run: uv run pytest -q -rs
