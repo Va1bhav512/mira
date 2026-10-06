@@ -16,8 +16,9 @@ SUBSETS=${SUBSETS:-hr computer_science pharmaceuticals}
 GEN_LIMIT=${GEN_LIMIT:-60}
 mkdir -p "$CACHE" "$OUT/index"
 
-emb=$(find /kaggle/input -name embeddings.tar 2>/dev/null | head -1)
-if [[ -n $emb ]]; then tar xf "$emb" -C "$CACHE"; fi
+# Kaggle extracts uploaded tarballs, so the checkpoint dataset mounts as an embeddings/ folder
+emb=$(find /kaggle/input -type d -name embeddings 2>/dev/null | head -1)
+if [[ -n $emb ]]; then cp -r "$emb" "$CACHE/embeddings"; fi
 python scripts/index_corpus.py $URL --bm25-path "$OUT/index/bm25" --cache-dir "$CACHE/embeddings"
 python scripts/eval_retrieval.py $URL --bm25-path "$OUT/index/bm25" --dump-rankings "$OUT/rankings_custom.jsonl"
 name=$(curl -sf -X POST localhost:6333/collections/mira_pages/snapshots | python -c 'import json,sys; print(json.load(sys.stdin)["result"]["name"])')
