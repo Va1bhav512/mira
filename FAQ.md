@@ -499,6 +499,7 @@ Main benchmark: **ViDoRe V3** (Hugging Face `vidore/vidore_v3_*`). These are the
 | pharmaceuticals | 2,313 | 364 | ~45 min |
 | finance_en | 2,942 | 309 | ~1 h |
 | finance_fr 🇫🇷 | 2,384 | 320 | ~48 min |
+| industrial | 5,244 | 283 | ~1 h 45 |
 
 Each query appears in 6 languages. English counts are total/6, checked directly on `hr` (318) and `energy`.
 🇫🇷 = **French page text**: Mira's BM25 stemmer/stopwords are English, so the lexical channel is not meaningful there yet. First runs use `computer_science` + `hr`; add `pharmaceuticals` for charts/tables in the final report. Why V3:
