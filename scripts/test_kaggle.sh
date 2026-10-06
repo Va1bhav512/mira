@@ -1,171 +1,121 @@
 #!/usr/bin/env bash
-# Run Mira's GPU tests on Kaggle against the LOCAL working tree
-# (uncommitted changes included), so you can test before pushing.
+# Run Mira's GPU tests and evals on a Kaggle T4 against the LOCAL working tree
+# (uncommitted changes included). Kaggle runs the whole job as one batch kernel (up to 12 h,
+# not reclaimed mid-run like free Colab), so there are no stages or checkpoints here.
 #
-# Usage: scripts/test_kaggle.sh [--eval] [notebook-name]     (default name: mira)
-#   Default: pytest + index/search example on test.pdf (cloud Qdrant).
-#   --eval:  pytest, then index all of data/samples into a Qdrant server + BM25 on the VM
-#            and run eval_retrieval.py on all modes. Output saved to data/eval/kaggle_eval.log.
-#            After indexing, the embedding cache (~500 MB) is downloaded to
-#            .cache/kaggle/embeddings.tar and re-uploaded on later runs, so a reclaimed VM
-#            costs an upload + re-render/OCR (~20 min) instead of ~1 h of re-embedding.
+# Usage: scripts/test_kaggle.sh [--eval | --eval-vidore subset[,subset...]] [kernel-name]   (default: mira-gpu)
+#   Default:       pytest + index/search example on test.pdf
+#   --eval:        pytest, index all of data/samples, eval_retrieval.py on all modes
+#   --eval-vidore: pytest, then per ViDoRe V3 subset: index, retrieval eval, cropping eval
+#                  (Phase 5) and generation on 50 queries (Phase 6)
+#   Log saved to data/eval/kaggle_<mode>.log; generation answers to data/eval/generation_<subset>.jsonl.
 #
-# Needs: kaggle.json in ~/.kaggle/ or KAGGLE_KEY/KAGGLE_USERNAME env vars,
-#        .env with QDRANT_CLUSTER_ENDPOINT/_API_KEY.
+# What goes to Kaggle (private):
+#   - the code, embedded in the kernel script (git ls-files; .env is gitignored and also excluded)
+#   - data/samples PDFs, as dataset mira-samples, uploaded once. Delete it on Kaggle
+#     to re-upload after changing the PDFs.
+# Qdrant runs on the Kaggle VM for every mode, so no credentials ever leave this machine.
+#
+# Needs: kaggle CLI with an API token, a phone-verified account (kernels need internet).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-EVAL=0
-if [[ ${1:-} == --eval ]]; then EVAL=1; shift; fi
-N=${1:-mira-test}
-CHECKPOINT=.cache/kaggle/embeddings.tar
-
-set -a; source .env; set +a
-: "${QDRANT_CLUSTER_ENDPOINT:?missing in .env}" "${QDRANT_CLUSTER_API_KEY:?missing in .env}"
+MODE=test SUBSETS=""
+if [[ ${1:-} == --eval ]]; then MODE=eval; shift; fi
+if [[ ${1:-} == --eval-vidore ]]; then MODE=vidore; SUBSETS=${2:?subsets missing}; shift 2; fi
+N=${1:-mira-gpu}  # Kaggle titles need >= 5 chars
+USER_NAME=$(kaggle config view | awk '/username/ {print $3}')
+: "${USER_NAME:?no Kaggle username in kaggle config}"
+KERNEL="$USER_NAME/$N" SAMPLES="$USER_NAME/mira-samples"
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
-# Tracked + untracked-but-not-ignored files, plus sample PDFs.
-# Exclude .env (secrets) and .cache (large local files).
-rm -rf data/samples 2>/dev/null || true
-mkdir -p data/samples
-if (( EVAL )); then  
-  cp -L /home/vaibhav/g/mira/data/samples/*.pdf data/samples/
-else
-  cp -L /home/vaibhav/g/mira/data/samples/test.pdf data/samples/
-fi
-samples=(data/samples/*.pdf)
-{ git ls-files -c --exclude-standard; git ls-files -o --exclude-standard; printf '%s\n' "${samples[@]}"; } | grep -v '\.env$' | grep -v '\.cache/' | tar czf "$tmp/mira.tgz" -T -
-
-KAGGLE_USER=$(kaggle config view | grep username | awk '{print $3}')
-: "${KAGGLE_USER:?Could not get Kaggle username from config}"
-
-# Create kernel metadata with dataset dependency
-cat > "$tmp/kernel-metadata.json" <<METADATA
-{
-  "title": "$N",
-  "id": "$KAGGLE_USER/$N",
-  "code_file": "script.py",
-  "language": "python",
-  "kernel_type": "script",
-  "is_private": true,
-  "enable_gpu": true,
-  "enable_internet": true,
-  "dataset_sources": ["$KAGGLE_USER/$N-tarball"],
-  "competition_sources": [],
-  "kernel_sources": []
-}
-METADATA
-
-# Create dataset metadata for tarball
-cat > "$tmp/dataset-metadata.json" <<DATAMETA
-{
-  "title": "$N-tarball",
-  "id": "$KAGGLE_USER/$N-tarball",
-  "licenses": [{"name": "CC0-1.0"}]
-}
-DATAMETA
-
-# Upload tarball as dataset (create or update)
-if kaggle datasets list --user "$KAGGLE_USER" --search "$N-tarball" -v 2>/dev/null | grep -q "$N-tarball"; then
-  echo "Updating dataset '$N-tarball'..."
-  cp "$tmp/dataset-metadata.json" "$tmp/mira.tgz" .
-  kaggle datasets version -p . -m "Working tree $(date +%Y%m%d-%H%M%S)" --quiet
-else
-  echo "Creating dataset '$N-tarball'..."
-  cp "$tmp/dataset-metadata.json" "$tmp/mira.tgz" .
-  kaggle datasets create -p . --quiet
+# Sample PDFs: a private dataset, created on first use
+if ! kaggle datasets status "$SAMPLES" >/dev/null 2>&1; then
+  mkdir "$tmp/samples"
+  cp -L data/samples/*.pdf "$tmp/samples/"
+  printf '{"title": "%s", "id": "%s", "licenses": [{"name": "other"}]}\n' "mira-samples" "$SAMPLES" \
+    > "$tmp/samples/dataset-metadata.json"
+  kaggle datasets create -p "$tmp/samples" -q
+  echo "Waiting for dataset $SAMPLES..."
+  until kaggle datasets status "$SAMPLES" 2>/dev/null | grep -q ready; do sleep 10; done
 fi
 
-# Upload checkpoint if it exists
-if (( EVAL )) && [[ -f $CHECKPOINT ]]; then
-  cat > "$tmp/checkpoint-metadata.json" <<CHKMETA
+# Kernel: code tarball (base64) + runner. Results go to /kaggle/working, the kernel's output.
+git ls-files -co --exclude-standard | grep -vx '.env' | tar czf "$tmp/code.tgz" -T -
+mkdir "$tmp/kernel"
 {
-  "title": "$N-embeddings",
-  "id": "$KAGGLE_USER/$N-embeddings",
-  "licenses": [{"name": "CC0-1.0"}]
-}
-CHKMETA
-  if kaggle datasets list --user "$KAGGLE_USER" --search "$N-embeddings" -v 2>/dev/null | grep -q "$N-embeddings"; then
-    kaggle datasets version -p "$CHECKPOINT" -m "Embeddings checkpoint $(date +%Y%m%d-%H%M%S)" --quiet 2>/dev/null || true
-  else
-    kaggle datasets create -p "$CHECKPOINT" --quiet
-  fi
-fi
+  echo "MODE, SUBSETS = '$MODE', '$SUBSETS'"
+  echo "CODE = '$(base64 -w0 "$tmp/code.tgz")'"
+  cat <<'PY'
+import base64, glob, io, os, subprocess, sys, tarfile
 
-# Shared helpers for both stages
-cat > "$tmp/common.py" <<'PY'
-import os, subprocess, sys
+SRC, CACHE, OUT = "/tmp/mira", "/tmp/cache", "/kaggle/working"
+os.makedirs(SRC)
+tarfile.open(fileobj=io.BytesIO(base64.b64decode(CODE))).extractall(SRC)
+samples = os.path.dirname(glob.glob("/kaggle/input/**/test.pdf", recursive=True)[0])
+os.makedirs(f"{SRC}/data", exist_ok=True)
+os.symlink(samples, f"{SRC}/data/samples")
 
 def run(cmd):
     print(f"\n$ {cmd}", flush=True)
-    p = subprocess.Popen(cmd, shell=True, cwd="/kaggle/working/mira", text=True,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    for line in p.stdout:
-        print(line, end="", flush=True)
-    if p.wait():
-        raise SystemExit(f"FAILED ({p.returncode}): {cmd}")
+    if subprocess.run(cmd, shell=True, cwd=SRC).returncode:
+        raise SystemExit(f"FAILED: {cmd}")
 
-PATHS = "--qdrant-url http://localhost:6333 --bm25-path /kaggle/working/cache/bm25"
-PY
-
-# Stage 1: install, test, and (--eval) index the corpus, then pack the embedding cache
-{ cat "$tmp/common.py"; cat <<'PY'
-import tarfile, glob, os
-# Find and extract the uploaded tarball (dataset slug replaces spaces with dashes)
-tarball = glob.glob("/kaggle/input/*/mira.tgz")[0]
-subprocess.run(f"rm -rf /kaggle/working/mira && mkdir -p /kaggle/working/mira && tar xzf {tarball} -C /kaggle/working/mira", shell=True, check=True)
 run("nvidia-smi --query-gpu=name,memory.total --format=csv")
-run(f"{sys.executable} -m pip install -q -e '/kaggle/working/mira[dev]'")
+extras = "dev,generation,vidore" if MODE == "vidore" else "dev,generation"
+run(f"{sys.executable} -m pip install -q -e '.[{extras}]'")
+# Kaggle may ship an old torchao; transformers 5 refuses to load models with torchao < 0.16
 run(f"{sys.executable} -m pip uninstall -q -y torchao")
-run(f"{sys.executable} -m pytest -v -rs /kaggle/working/mira/tests")
-if os.environ.get("MIRA_EVAL") == "1":
-    # Restore checkpoint if available
-    checkpoint_files = glob.glob("/kaggle/input/*embeddings*/embeddings.tar")
-    if checkpoint_files and not os.path.exists("/kaggle/working/cache/embeddings"):
-        run(f"mkdir -p /kaggle/working/cache && tar xf {checkpoint_files[0]} -C /kaggle/working/cache")
-    # Start Qdrant server
-    if subprocess.run("curl -sf localhost:6333/readyz", shell=True).returncode:
-        run("mkdir -p /kaggle/working/cache/qdrant-bin && cd /kaggle/working/cache/qdrant-bin && { [ -x qdrant ] || "
-            "curl -sL https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-unknown-linux-gnu.tar.gz | tar xz; }")
-        subprocess.Popen("QDRANT__STORAGE__STORAGE_PATH=/kaggle/working/cache/qdrant-server /kaggle/working/cache/qdrant-bin/qdrant"
-                         " > /kaggle/working/cache/qdrant.log 2>&1", shell=True, start_new_session=True)
-        run("for i in $(seq 60); do curl -sf localhost:6333/readyz && exit 0; sleep 1; done; exit 1")
-    run(f"{sys.executable} /kaggle/working/mira/scripts/index_corpus.py {PATHS} --cache-dir /kaggle/working/cache/embeddings")
-    run("tar cf /kaggle/working/embeddings.tar -C /kaggle/working/cache embeddings && ls -la /kaggle/working/embeddings.tar")
-    print("\nSTAGE 1 DONE")
+run(f"{sys.executable} -m pytest -v -rs tests")
+
+# Qdrant server on the VM (single binary). With no .env, every store defaults to localhost:6333.
+run(f"mkdir -p {CACHE}/qdrant-bin && curl -sL https://github.com/qdrant/qdrant/releases/latest/download/"
+    f"qdrant-x86_64-unknown-linux-gnu.tar.gz | tar xz -C {CACHE}/qdrant-bin")
+subprocess.Popen(f"QDRANT__STORAGE__STORAGE_PATH={CACHE}/qdrant {CACHE}/qdrant-bin/qdrant > {CACHE}/qdrant.log 2>&1",
+                 shell=True, start_new_session=True)
+run("for i in $(seq 60); do curl -sf localhost:6333/readyz && exit 0; sleep 1; done; exit 1")
+
+py, url = sys.executable, "--qdrant-url http://localhost:6333"
+if MODE == "eval":
+    paths = f"{url} --bm25-path {CACHE}/bm25"
+    run(f"{py} scripts/index_corpus.py {paths} --cache-dir {CACHE}/embeddings")
+    run(f"{py} scripts/eval_retrieval.py {paths}")
+elif MODE == "vidore":
+    for s in SUBSETS.split(","):
+        bm25 = f"{CACHE}/bm25_vidore/{s}"
+        run(f"{py} scripts/index_vidore.py --subset {s} {url} --bm25-path {bm25} --cache-dir {CACHE}/embeddings_vidore/{s}")
+        run(f"{py} scripts/eval_retrieval.py --vidore {s} {url} --bm25-path-vidore {bm25}")
+        run(f"{py} scripts/eval_cropping.py --vidore {s} {url}")
+        run(f"{py} scripts/eval_generation.py --vidore {s} {url} --bm25-path {bm25} --out {OUT}/generation_{s}.jsonl")
 else:
-    run(f"{sys.executable} /kaggle/working/mira/examples/index_and_search.py /kaggle/working/mira/data/samples/test.pdf")
-    print("\nALL PASSED")
+    run(f"{py} examples/index_and_search.py data/samples/test.pdf")
+print("\nALL PASSED", flush=True)
 PY
-} > "$tmp/script.py"
+} > "$tmp/kernel/run.py"
+cat > "$tmp/kernel/kernel-metadata.json" <<JSON
+{"id": "$KERNEL", "title": "$N", "code_file": "run.py", "language": "python", "kernel_type": "script",
+ "is_private": true, "enable_gpu": true, "enable_internet": true,
+ "dataset_sources": ["$SAMPLES"], "competition_sources": [], "kernel_sources": []}
+JSON
+kaggle kernels push -p "$tmp/kernel" --accelerator NvidiaTeslaT4
+echo "Running: https://www.kaggle.com/code/$KERNEL (live log on that page)"
 
-# Push kernel
-echo "Pushing kernel '$N'..."
-mkdir -p "$tmp/kernel"
-cp "$tmp/kernel-metadata.json" "$tmp/script.py" "$tmp/kernel/"
-kaggle kernels push -p "$tmp/kernel"
-
-# Poll for completion (kernel push starts it automatically)
-echo "Waiting for kernel completion..."
-STATUS=""
-for i in $(seq 120); do
-  sleep 30
-  STATUS=$(kaggle kernels status "$KAGGLE_USER/$N" 2>&1 || echo "unknown")
-  echo "[$i/120] Status: $STATUS"
-  if grep -qi "complete\|success\|fail\|error" <<<"$STATUS"; then
-    break
-  fi
+# Poll until the new version finishes (a fresh push reports queued/running first)
+status=""
+for _ in $(seq 800); do  # 800 x 60 s > Kaggle's 12 h limit
+  sleep 60
+  status=$(kaggle kernels status "$KERNEL" 2>&1 | grep -oE 'KernelWorkerStatus\.[A-Z_]+' || true)
+  echo "$(date +%H:%M) ${status:-status unavailable}"
+  [[ $status =~ COMPLETE|ERROR|CANCEL ]] && break
 done
 
-# Get output logs
-echo "Fetching output..."
-kaggle kernels output "$KAGGLE_USER/$N" -p "$tmp" > "$tmp/out.log" 2>&1 || true
-
-if (( EVAL )); then
-  mkdir -p data/eval
-  cp "$tmp/out.log" data/eval/kaggle_eval.log
-  echo "Saved data/eval/kaggle_eval.log"
+# Log arrives as a JSON list of stream chunks
+mkdir -p data/eval
+log=data/eval/kaggle_$MODE.log
+kaggle kernels logs "$KERNEL" | python3 -c 'import json,sys; print("".join(c["data"] for c in json.load(sys.stdin)), end="")' > "$log"
+echo "Saved $log"
+if [[ $MODE == vidore ]]; then
+  kaggle kernels output "$KERNEL" -p data/eval --file-pattern '^generation_.*\.jsonl$' -o -q && echo "Saved data/eval/generation_*.jsonl"
 fi
-
-grep -q "ALL PASSED" "$tmp/out.log" || { echo "KAGGLE RUN FAILED"; exit 1; }
-echo "Success. Output saved to: $tmp/out.log"
+tail -n 40 "$log"
+[[ $status == *COMPLETE ]] && grep -q "^ALL PASSED" "$log" || { echo "KAGGLE RUN FAILED ($status)"; exit 1; }
