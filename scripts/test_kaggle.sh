@@ -4,7 +4,7 @@
 # not reclaimed mid-run like free Colab), so there are no stages or checkpoints here.
 #
 # Usage: scripts/test_kaggle.sh [--eval | --eval-vidore subset[,subset...] | --run 'command']
-#                               [--dataset owner/slug]... [--no-tests] [kernel-name]   (default: mira-gpu)
+#                               [--dataset owner/slug]... [--kernel-output owner/kernel]... [--no-tests] [kernel-name]   (default: mira-gpu)
 #   Default:       pytest + index/search example on test.pdf
 #   --eval:        pytest, index all of data/samples, eval_retrieval.py on all modes
 #   --eval-vidore: pytest, then per ViDoRe V3 subset: index, retrieval eval, cropping eval
@@ -12,6 +12,7 @@
 #   --run:         pytest, then a shell command in the repo, with $OUT (kept as kernel output,
 #                  downloaded to .cache/kaggle/<kernel-name>/), $CACHE (scratch) and Qdrant up
 #   --dataset:     mount an extra private Kaggle dataset under /kaggle/input
+#   --kernel-output: mount another kernel's output (e.g. the demo index from mira-full)
 #   Log saved to data/eval/kaggle_<mode>.log; generation answers to data/eval/generation_<subset>.jsonl.
 #
 # What goes to Kaggle (private):
@@ -23,13 +24,14 @@
 # Needs: kaggle CLI with an API token, a phone-verified account (kernels need internet).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MODE=test SUBSETS="" CMD="" TESTS=1 DATASETS="" N=mira-gpu  # Kaggle titles need >= 5 chars
+MODE=test SUBSETS="" CMD="" TESTS=1 DATASETS="" KERNELS="" N=mira-gpu  # Kaggle titles need >= 5 chars
 while (( $# )); do
   case $1 in
     --eval) MODE=eval ;;
     --eval-vidore) MODE=vidore; SUBSETS=${2:?subsets missing}; shift ;;
     --run) MODE=run; CMD=${2:?command missing}; shift ;;
     --dataset) DATASETS+=", \"${2:?dataset missing}\""; shift ;;
+    --kernel-output) KERNELS+="${KERNELS:+, }\"${2:?kernel missing}\""; shift ;;
     --no-tests) TESTS=0 ;;
     *) N=$1 ;;
   esac
@@ -113,7 +115,7 @@ PY
 cat > "$tmp/kernel/kernel-metadata.json" <<JSON
 {"id": "$KERNEL", "title": "$N", "code_file": "run.py", "language": "python", "kernel_type": "script",
  "is_private": true, "enable_gpu": true, "enable_internet": true,
- "dataset_sources": ["$SAMPLES"$DATASETS], "competition_sources": [], "kernel_sources": []}
+ "dataset_sources": ["$SAMPLES"$DATASETS], "competition_sources": [], "kernel_sources": [$KERNELS]}
 JSON
 kaggle kernels push -p "$tmp/kernel" --accelerator NvidiaTeslaT4
 echo "Running: https://www.kaggle.com/code/$KERNEL (live log on that page)"
