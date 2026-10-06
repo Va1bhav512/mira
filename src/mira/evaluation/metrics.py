@@ -60,3 +60,29 @@ def paired_bootstrap(a: List[float], b: List[float], n: int = 10000, seed: int =
     lo, hi = np.percentile(diffs, [2.5, 97.5])
     p = 2 * min((diffs <= 0).mean(), (diffs >= 0).mean())
     return float((a - b).mean()), float(lo), float(hi), float(min(p, 1.0))
+
+
+Rect = Tuple[int, int, int, int]  # pixel (x0, y0, x1, y1)
+
+
+def _zone(boxes: List[Rect], width: int, height: int) -> np.ndarray:
+    """Union of boxes as a pixel mask."""
+    mask = np.zeros((height, width), dtype=bool)
+    for x0, y0, x1, y1 in boxes:
+        mask[max(y0, 0):max(y1, 0), max(x0, 0):max(x1, 0)] = True
+    return mask
+
+
+def zone_f1(predicted: List[Rect], annotators: List[List[Rect]], width: int, height: int) -> float:
+    """
+    ViDoRe V3 localization score: merge each side's boxes into one zone, pixel-level F1
+    (Dice) against each annotator's zone, keep the best annotator. Human ceiling: 0.602.
+    """
+    pred = _zone(predicted, width, height)
+    best = 0.0
+    for boxes in annotators:
+        gold = _zone(boxes, width, height)
+        denom = pred.sum() + gold.sum()
+        if denom:
+            best = max(best, 2 * float((pred & gold).sum()) / denom)
+    return best
