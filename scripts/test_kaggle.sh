@@ -50,6 +50,7 @@ mkdir "$tmp/kernel"
 import base64, glob, io, os, subprocess, sys, tarfile
 
 SRC, CACHE, OUT = "/tmp/mira", "/tmp/cache", "/kaggle/working"
+os.environ["PYTHONUNBUFFERED"] = "1"  # child scripts print progress live, not in buffered chunks
 os.makedirs(SRC)
 tarfile.open(fileobj=io.BytesIO(base64.b64decode(CODE))).extractall(SRC)
 samples = os.path.dirname(glob.glob("/kaggle/input/**/test.pdf", recursive=True)[0])
