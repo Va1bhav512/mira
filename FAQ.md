@@ -404,31 +404,46 @@ Result:
 - Higher resolution in relevant area (better OCR of small text)
 - Better attention on evidence (more accurate answers)
 
-### How does similarity heatmap work?
+### How does the similarity heatmap work?
 
-ColQwen provides similarity maps showing patch-level scores:
+`mira/evidence/localize.py`. No new model call: the query's token embeddings come from the
+retrieval step, and the page's patch embeddings are read back from Qdrant (`store.get_page`).
 
-```python
-# For query token "architecture"
-similarities = colqwen.get_similarity_map(query="architecture", page=page_3)
-
-# Result: 2D array [rows, cols] with scores
-# [[0.1, 0.2, 0.05, ...],
-#  [0.3, 0.85, 0.82, ...],  ← High scores = relevant region
-#  [0.15, 0.78, 0.80, ...],
-#  ...]
+```
+S_i(r, c) = q_i · p(r, c)                    # similarity map of query token i over the patch grid
+H(r, c)   = Σ_i α_i · topk_i(S_i)(r, c)      # each token keeps only its top-16 patches
+α_i       = max S_i − mean S_i               # peakedness
 ```
 
-Aggregate across all meaningful query tokens (excluding stopwords):
-```
-H(x,y) = Σ α_i × S_i(x,y)
+- **Why peakedness for α instead of a stopword list?** ColQwen's query embedding also has
+  prompt and padding tokens, not just words. A token that matches every patch about equally
+  ("the", padding) gets α ≈ 0; a token that spikes on one region ("STM32F401RE") gets a large α.
+  No tokenizer or corpus statistics needed.
+- **Why top-k per token?** Without it, hundreds of weak background matches add up and swamp the
+  real peak.
+- Then: threshold at 0.3 × max, dilate by one patch so a table split by whitespace joins one
+  group, take connected components, keep the 2 with the most heat (dropping any under 25% of
+  the best), pad 2% and grow each side to ≥15% of the page (the VLM needs some context).
+- Boxes are normalized `(x0, y0, x1, y1)` in [0, 1]. ColQwen's processor resizes the page
+  without padding, so the patch grid spans the whole page.
+- Crops: PDFs re-render just the box at 300 DPI (`render_region`, PyMuPDF `clip`). Sources with
+  no PDF, like ViDoRe page images, are cropped from the image (`crop_image`).
 
-where:
-- S_i(x,y) = similarity at (x,y) for token i
-- α_i = weight (higher for rare/important tokens)
-```
+All thresholds are hand-set, not tuned. Tuning them on V3 would mean tuning on the test set.
 
-Then threshold, cluster, pad, and crop.
+### How is cropping evaluated?
+
+`scripts/eval_cropping.py --vidore hr` uses the ViDoRe V3 paper's protocol. For each English query
+and each relevant page that annotators drew boxes on, it merges each side's boxes into one zone
+and computes the pixel-level F1 (Dice) against each annotator's zone, keeping the best
+annotator. Human agreement is 0.602. The pages are the *gold* pages, so this score measures
+cropping on its own, without retrieval errors. Three strategies are compared:
+
+| Strategy | What the VLM would see |
+|----------|------------------------|
+| `page` | the whole page (no-crop baseline) |
+| `max_patch` | a box around the single hottest patch (the naive crop) |
+| `heatmap` | Query-Adaptive Evidence Cropping |
 
 ---
 
@@ -472,6 +487,20 @@ response = {
 ```
 
 Deterministic, verifiable, no hallucination.
+
+In code (`mira/generation/`): the VLM sees images labelled `[E1]`, `[E2]`, … and is asked for
+`{"answer": ..., "evidence_ids": [...]}`. `answer_query` maps each cited id back to the
+`(document, page, bbox)` it was cropped from. Unknown ids are dropped. If the reply isn't
+JSON, the raw text becomes the answer and nothing is cited. This uses parse-and-fallback
+rather than constrained decoding; a JSON grammar is worth adding only if the fallback rate
+turns out to be significant.
+
+### How does the VLM fit on a T4 next to ColQwen?
+
+ColQwen2.5 in fp16 takes ~7 GB. Qwen2.5-VL-3B in fp16 takes another ~7.5 GB, which overflows the
+T4's 15 GB. The VLM is therefore loaded in 4-bit NF4 via bitsandbytes (~2.5 GB, `generation`
+extra), and each evidence image is capped at ~1,000 visual tokens (`MAX_PIXELS`). Compute dtype
+is bf16 on Ampere and newer, and fp16 on a T4, where bf16 is only emulated.
 
 ### Why Qwen2.5-VL-3B instead of 7B?
 

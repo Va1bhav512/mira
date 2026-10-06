@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
+
 from .colqwen import ColQwenEmbedder
 from .lexical import BM25Index
 from .qdrant_store import QdrantMultivectorStore, SearchResult
@@ -162,8 +164,12 @@ class HybridRetriever:
         top_k: int = 10,
         document_filter: Optional[str] = None,
         modes: Tuple[str, ...] = MODES,
+        query_embedding: Optional[np.ndarray] = None,
     ) -> Dict[str, List[HybridResult]]:
-        """Like search(), for several modes at once: each channel is queried once, then fused per mode."""
+        """
+        Like search(), for several modes at once: each channel is queried once, then fused per mode.
+        Pass query_embedding when the caller already has it (evidence cropping reuses it).
+        """
         for mode in modes:
             if mode not in MODES:
                 raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
@@ -171,8 +177,10 @@ class HybridRetriever:
         visual: List[SearchResult] = []
         lexical: List[SearchResult] = []
         if any(m != "lexical" for m in modes):
+            if query_embedding is None:
+                query_embedding = self.embedder.embed_query(query)
             visual = self.store.search(
-                self.embedder.embed_query(query), top_k=self.candidates, document_filter=document_filter
+                query_embedding, top_k=self.candidates, document_filter=document_filter
             )
         if any(m != "visual" for m in modes):
             lexical = self.text_index.search(query, top_k=self.candidates, document_filter=document_filter)

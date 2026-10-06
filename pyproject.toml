@@ -15,6 +15,7 @@ dependencies = [
     "torch>=2.4.0",
     "bm25s>=0.3.12",
     "pystemmer>=3.1.0",
+    "scipy>=1.13.0",
 ]
 
 [build-system]
@@ -31,6 +32,9 @@ dev = [
 ]
 vidore = [
     "datasets>=3.0.0",
+]
+generation = [
+    "bitsandbytes>=0.45.0",
 ]
 
 [tool.pytest.ini_options]

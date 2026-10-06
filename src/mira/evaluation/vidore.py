@@ -6,7 +6,7 @@ public subsets; energy, physics and finance_fr have French pages, where Mira's
 English-stemmer BM25 channel is not meaningful — prefer the English subsets.
 """
 
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 Page = Tuple[str, int]  # (doc_id, page_number_in_doc), 0-indexed page
 
@@ -44,3 +44,15 @@ def build_relevance(qrels: Iterable[dict], keys: Dict[int, Page]) -> Dict[int, D
 def relevant_set(grades: Dict[Page, int]) -> set:
     """Pages counting as relevant for binary metrics (recall, MRR): any grade >= 1."""
     return {page for page, grade in grades.items() if grade >= CRITICALLY_RELEVANT}
+
+
+def annotator_boxes(qrels: Iterable[dict], keys: Dict[int, Page]) -> Dict[int, Dict[Page, List[List[Tuple[int, int, int, int]]]]]:
+    """query_id -> {page: one list of pixel (x0, y0, x1, y1) boxes per annotator}; pages without boxes are left out."""
+    boxes: Dict[int, Dict[Page, List[List[Tuple[int, int, int, int]]]]] = {}
+    for row in qrels:
+        by_annotator: Dict[int, list] = {}
+        for b in row.get("bounding_boxes") or []:
+            by_annotator.setdefault(b["annotator"], []).append((b["x1"], b["y1"], b["x2"], b["y2"]))
+        if by_annotator:
+            boxes.setdefault(row["query_id"], {})[keys[row["corpus_id"]]] = list(by_annotator.values())
+    return boxes

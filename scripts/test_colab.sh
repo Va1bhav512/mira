@@ -10,7 +10,9 @@
 #            .cache/colab/embeddings.tar and re-uploaded on later runs, so a reclaimed VM
 #            costs an upload + re-render/OCR (~20 min) instead of ~1 h of re-embedding.
 #   --eval-vidore: pytest, then index the given ViDoRe V3 subsets (e.g.
-#            computer_science,hr) and run eval_retrieval.py --vidore on each.
+#            computer_science,hr) and run, on each: eval_retrieval.py --vidore,
+#            eval_cropping.py (Phase 5) and eval_generation.py on 50 queries (Phase 6;
+#            answers downloaded to data/eval/generation_<subset>.jsonl).
 #            Log saved to data/eval/vidore_eval.log; embedding cache checkpointed to
 #            .cache/colab/embeddings_vidore.tar the same way as --eval.
 #   Reuses the session if it exists. Stop it when done: colab stop -s mira
@@ -73,7 +75,7 @@ PY
 subprocess.run("rm -rf /content/mira && mkdir /content/mira && tar xzf /content/mira.tgz -C /content/mira",
                shell=True, check=True)
 run("nvidia-smi --query-gpu=name,memory.total --format=csv")
-extras = "dev,vidore" if os.environ.get("MIRA_VIDORE") == "1" else "dev"
+extras = "dev,generation,vidore" if os.environ.get("MIRA_VIDORE") == "1" else "dev,generation"
 run(f"{sys.executable} -m pip install -q -e '.[{extras}]'")
 # Colab ships torchao 0.10; transformers 5 refuses to load any model with torchao < 0.16 present
 run(f"{sys.executable} -m pip uninstall -q -y torchao")
@@ -124,6 +126,9 @@ PY
 for subset in os.environ["VIDORE_SUBSETS"].split(","):
     run(f"{sys.executable} scripts/eval_retrieval.py --vidore {subset} --qdrant-url http://localhost:6333"
         f" --bm25-path-vidore /content/cache/bm25_vidore/{subset}")
+    run(f"{sys.executable} scripts/eval_cropping.py --vidore {subset} --qdrant-url http://localhost:6333")
+    run(f"{sys.executable} scripts/eval_generation.py --vidore {subset} --qdrant-url http://localhost:6333"
+        f" --bm25-path /content/cache/bm25_vidore/{subset}")
 print("\nALL PASSED")
 PY
 } > "$tmp/stage2v.py"
@@ -192,6 +197,9 @@ if [[ -n $VIDORE_SUBSETS ]]; then
   checkpoint /content/embeddings_vidore.tar "$VIDORE_CHECKPOINT"
   remote_stage "$tmp/stage2v.py" stage2v || { echo "COLAB RUN FAILED (stage 2)"; exit 1; }
   cp "$tmp/out.log" data/eval/vidore_eval.log; echo "Saved data/eval/vidore_eval.log"
+  for subset in ${VIDORE_SUBSETS//,/ }; do
+    colab download -s "$S" "/content/mira/data/eval/generation_$subset.jsonl" "data/eval/generation_$subset.jsonl"
+  done
 fi
 
 echo "Session '$S' still running. Stop it: colab stop -s $S"

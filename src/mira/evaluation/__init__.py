@@ -1,5 +1,5 @@
 """Evaluation utilities for Mira (retrieval metrics; benchmarks in Phase 7)."""
 
-from .metrics import first_relevant_rank, recall_at_k, reciprocal_rank, ndcg_at_k, ndcg_at_k_graded, paired_bootstrap
+from .metrics import first_relevant_rank, recall_at_k, reciprocal_rank, ndcg_at_k, ndcg_at_k_graded, paired_bootstrap, zone_f1
 
-__all__ = ['first_relevant_rank', 'recall_at_k', 'reciprocal_rank', 'ndcg_at_k', 'ndcg_at_k_graded', 'paired_bootstrap']
+__all__ = ['first_relevant_rank', 'recall_at_k', 'reciprocal_rank', 'ndcg_at_k', 'ndcg_at_k_graded', 'paired_bootstrap', 'zone_f1']
