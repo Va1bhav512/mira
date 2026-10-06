@@ -37,6 +37,7 @@ python scripts/judge_answers.py "$OUT"/generation_*.jsonl
 
 # Demo end to end on the GPU: API + UI over the custom corpus (overlays saved for inspection)
 python -m mira.serve --qdrant-url http://localhost:6333 --bm25-path "$OUT/index/bm25" > "$OUT/serve.log" 2>&1 &
+server=$!
 for _ in $(seq 120); do curl -sf localhost:7860/docs >/dev/null && break; sleep 5; done
 python scripts/demo_smoke.py --out "$OUT/demo_smoke"
-kill %1
+kill $server
