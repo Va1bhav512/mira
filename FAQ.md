@@ -404,31 +404,46 @@ Result:
 - Higher resolution in relevant area (better OCR of small text)
 - Better attention on evidence (more accurate answers)
 
-### How does similarity heatmap work?
+### How does the similarity heatmap work?
 
-ColQwen provides similarity maps showing patch-level scores:
+`mira/evidence/localize.py`. No new model call: the query's token embeddings come from the
+retrieval step, and the page's patch embeddings are read back from Qdrant (`store.get_page`).
 
-```python
-# For query token "architecture"
-similarities = colqwen.get_similarity_map(query="architecture", page=page_3)
-
-# Result: 2D array [rows, cols] with scores
-# [[0.1, 0.2, 0.05, ...],
-#  [0.3, 0.85, 0.82, ...],  ← High scores = relevant region
-#  [0.15, 0.78, 0.80, ...],
-#  ...]
+```
+S_i(r, c) = q_i · p(r, c)                    # similarity map of query token i over the patch grid
+H(r, c)   = Σ_i α_i · topk_i(S_i)(r, c)      # each token keeps only its top-16 patches
+α_i       = max S_i − mean S_i               # peakedness
 ```
 
-Aggregate across all meaningful query tokens (excluding stopwords):
-```
-H(x,y) = Σ α_i × S_i(x,y)
+- **Why peakedness for α instead of a stopword list?** ColQwen's query embedding also has
+  prompt and padding tokens, not just words. A token that matches every patch about equally
+  ("the", padding) gets α ≈ 0; a token that spikes on one region ("STM32F401RE") gets a large α.
+  No tokenizer or corpus statistics needed.
+- **Why top-k per token?** Without it, hundreds of weak background matches add up and swamp the
+  real peak.
+- Then: threshold at 0.3 × max, dilate by one patch so a table split by whitespace joins one
+  group, take connected components, keep the 2 with the most heat (dropping any under 25% of
+  the best), pad 2% and grow each side to ≥15% of the page (the VLM needs some context).
+- Boxes are normalized `(x0, y0, x1, y1)` in [0, 1]. ColQwen's processor resizes the page
+  without padding, so the patch grid spans the whole page.
+- Crops: PDFs re-render just the box at 300 DPI (`render_region`, PyMuPDF `clip`). Sources with
+  no PDF, like ViDoRe page images, are cropped from the image (`crop_image`).
 
-where:
-- S_i(x,y) = similarity at (x,y) for token i
-- α_i = weight (higher for rare/important tokens)
-```
+All thresholds are hand-set, not tuned. Tuning them on V3 would mean tuning on the test set.
 
-Then threshold, cluster, pad, and crop.
+### How is cropping evaluated?
+
+`scripts/eval_cropping.py --vidore hr` uses the ViDoRe V3 paper's protocol. For each English query
+and each relevant page that annotators drew boxes on, it merges each side's boxes into one zone
+and computes the pixel-level F1 (Dice) against each annotator's zone, keeping the best
+annotator. Human agreement is 0.602. The pages are the *gold* pages, so this score measures
+cropping on its own, without retrieval errors. Three strategies are compared:
+
+| Strategy | What the VLM would see |
+|----------|------------------------|
+| `page` | the whole page (no-crop baseline) |
+| `max_patch` | a box around the single hottest patch (the naive crop) |
+| `heatmap` | Query-Adaptive Evidence Cropping |
 
 ---
 
@@ -473,6 +488,20 @@ response = {
 
 Deterministic, verifiable, no hallucination.
 
+In code (`mira/generation/`): the VLM sees images labelled `[E1]`, `[E2]`, … and is asked for
+`{"answer": ..., "evidence_ids": [...]}`. `answer_query` maps each cited id back to the
+`(document, page, bbox)` it was cropped from. Unknown ids are dropped. If the reply isn't
+JSON, the raw text becomes the answer and nothing is cited. This uses parse-and-fallback
+rather than constrained decoding; a JSON grammar is worth adding only if the fallback rate
+turns out to be significant.
+
+### How does the VLM fit on a T4 next to ColQwen?
+
+ColQwen2.5 in fp16 takes ~7 GB. Qwen2.5-VL-3B in fp16 takes another ~7.5 GB, which overflows the
+T4's 15 GB. The VLM is therefore loaded in 4-bit NF4 via bitsandbytes (~2.5 GB, `generation`
+extra), and each evidence image is capped at ~1,000 visual tokens (`MAX_PIXELS`). Compute dtype
+is bf16 on Ampere and newer, and fp16 on a T4, where bf16 is only emulated.
+
 ### Why Qwen2.5-VL-3B instead of 7B?
 
 For a student project:
@@ -488,15 +517,29 @@ Can compare 3B vs 7B in evaluation if hardware permits, but retrieval experiment
 
 ### What datasets for evaluation?
 
-Primary:
-- **ViDoRe benchmark**: Standard for visual document retrieval (7 datasets, Recall@k, nDCG)
-- **DocVQA**: Visual question answering on documents
-- **Custom**: Scanned datasheets, financial reports
+Main benchmark: **ViDoRe V3** (Hugging Face `vidore/vidore_v3_*`). These are the English pages and queries per subset:
 
-For Mira's novel contributions, create custom splits:
-- Identifier-heavy queries (tests BM25)
-- Visual queries (tests ColQwen)
-- Hybrid queries (tests fusion)
+| Subset | Pages | English queries | Est. T4 embedding |
+|--------|------:|----------------:|------------------:|
+| hr | 1,110 | 318 | ~22 min |
+| computer_science | 1,360 | 215 | ~27 min |
+| physics 🇫🇷 | 1,674 | 302 | ~35 min |
+| energy 🇫🇷 | 2,225 | 308 | ~45 min |
+| pharmaceuticals | 2,313 | 364 | ~45 min |
+| finance_en | 2,942 | 309 | ~1 h |
+| finance_fr 🇫🇷 | 2,384 | 320 | ~48 min |
+| industrial | 5,244 | 283 | ~1 h 45 |
+
+Each query appears in 6 languages. English counts are total/6, checked directly on `hr` (318) and `energy`.
+🇫🇷 = **French page text**: Mira's BM25 stemmer/stopwords are English, so the lexical channel is not meaningful there yet. First runs use `computer_science` + `hr`; add `pharmaceuticals` for charts/tables in the final report. Why V3:
+- Each page includes `markdown` text, so BM25 gets text without OCR.
+- Queries are human-written or synthetic, all human-verified, and tagged with `query_types` (extractive, numerical, multi-hop…), `query_format` (question / keyword / instruction) and `content_type` (Text, Table, Chart, Infographic…). These tags give a per-type breakdown like the custom set's.
+- Relevance is graded (`score` 1–2), and each relevant page has **annotated bounding boxes**. Phase 5 crops can be scored against them.
+- It ships page images (~1700×2200), not PDFs. The original PDFs are linked in `documents_metadata`.
+
+ViDoRe V1 is near-saturated for ColQwen2.5 (~89 nDCG@5). V2 (ESG, biomedical, economics) has no page text, so BM25 would need OCR on every page. That makes V3 the better choice for a hybrid system.
+
+**Custom set** (`data/eval/queries.jsonl`, 22 technical PDFs) is kept as an out-of-domain test. It is heavy on identifiers (part numbers, register names), where BM25 should matter more than on ViDoRe.
 
 ### What metrics?
 
@@ -531,16 +574,18 @@ Writing the queries:
 
 Ablation removes components to test contribution:
 
-*Illustrative numbers only, not results. Replace with real numbers from `scripts/eval_retrieval.py`.*
+Retrieval ablation, **real results** (2,674 pages, 47 labelled queries; full table, setup and caveats in `data/eval/results.md`):
 
-| System | Recall@5 | Notes |
-|--------|----------|-------|
-| ColQwen only | 0.72 | Baseline |
-| BM25 only | 0.45 | Baseline |
-| Fixed RRF (w=1,1) | 0.78 | Fusion helps |
-| **Adaptive RRF** | **0.82** | This is your contribution |
-| Full page to VLM | 0.71 accuracy | Baseline |
-| **Evidence crop + VLM** | **0.85 accuracy** | Your contribution |
+| System | R@5 | MRR | nDCG@10 |
+|--------|----:|----:|--------:|
+| BM25 only | 0.798 | 0.724 | 0.751 |
+| ColQwen only | 0.883 | 0.791 | 0.801 |
+| Fixed RRF (1:1) | 0.894 | 0.814 | 0.824 |
+| **Adaptive RRF** | **0.904** | **0.836** | **0.843** |
+
+The ordering holds on every metric, but adaptive vs fixed is a 2-query difference at R@1 on 47 queries, so it needs a significance test and ideally more queries before claiming it strongly.
+
+The generation half (full page vs evidence crop to the VLM) is Phase 5–6 and has no numbers yet.
 
 Tables prove:
 - You didn't just "assemble existing components"
@@ -652,6 +697,32 @@ Options:
 3. Use Tesseract instead of EasyOCR (faster, less accurate)
 4. Parallelize OCR across CPU cores
 5. Skip OCR entirely for digitally-generated PDFs
+
+### What went wrong running the full corpus on Colab, and how is it handled?
+
+Each of these broke a real run on a Colab T4 (15 GB VRAM, 12 GB RAM, no swap):
+
+| Symptom | Cause | Handling |
+|---------|-------|----------|
+| ColQwen OOM on GPU, but PyTorch reports only 3.4 GB allocated | `bm25s` imports JAX (preinstalled on Colab) and runs a dummy op; JAX then preallocates 75% of VRAM | `lexical.py` sets `JAX_PLATFORMS=cpu` before importing `bm25s` |
+| `ValueError: Vector contains NaN values` from Qdrant | fp16 overflow inside Qwen2.5 on some pages (frequent on the scanned NASA report, ~1 in 4–8 pages; rare on digital PDFs) | Pages that come out NaN are re-embedded in bf16 (6× slower on a T4, so not the default); the cache rejects NaN entries |
+| Process `Killed` (exit 137) while reloading weights | `from_pretrained` on CPU then `.to(cuda)` peaks at 8.1 GB host RAM | Load with `device_map="cuda"`: 1.2 GB peak |
+| Eval `Killed`, and the log silently stops | Qdrant's embedded `path=` mode unpickles every point into RAM; the 2,674-page index is a 2.2 GB sqlite file | Embedded mode removed; `test_colab.sh --eval` runs a Qdrant server binary on the VM |
+| Upload fails with SSL EOF, then "session not found" | Free-tier VMs get reclaimed after a few hours, losing everything under `/content` | `test_colab.sh --eval` downloads the embedding cache (~500 MB, fp16) to `.cache/colab/` after indexing and re-uploads it next run: ~20 min instead of ~1 h |
+
+### Where does the time go in a full-corpus eval run?
+
+Measured on a Colab T4 (`data/eval/colab_eval.log`):
+
+| Step | Time | Notes |
+|------|------|-------|
+| pip install + pytest | ~5 min | pytest alone is 4 min, mostly loading ColQwen for the GPU tests |
+| ColQwen page embedding | **~1.1–1.3 s/page**, ~50–55 min for 2,674 pages | ~750 image tokens per page through a 3B model on a T4 in fp16. Dominates everything |
+| bf16 retries | 6× slower per affected page | Only NaN pages; mostly on the scanned NASA report |
+| Render + text/OCR | small on digital PDFs; slow on scans | Still runs for cached pages, because BM25 needs the text |
+| Eval (47 queries × 4 modes) | minutes, not timed | Query embedding + exact MaxSim over 2,674 pages + BM25 |
+
+Embedding is a one-off cost per corpus. With the checkpoint, a rerun skips it. Changing fusion or eval code never needs re-embedding.
 
 ### Qdrant multivector search is slow. What to do?
 

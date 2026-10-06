@@ -4,7 +4,7 @@ Index every PDF in a directory: ColQwen -> Qdrant, page text -> BM25.
 
 Usage:
     uv run python scripts/index_corpus.py                                  # cloud Qdrant from .env
-    uv run python scripts/index_corpus.py --qdrant-path /content/cache/qdrant \\
+    uv run python scripts/index_corpus.py --qdrant-url http://localhost:6333 \\
         --bm25-path /content/cache/bm25 --cache-dir /content/cache/embeddings
 
 Resumable: documents already in the BM25 index are skipped. BM25 is saved only
@@ -20,7 +20,7 @@ from mira.retrieval import BM25Index, ColQwenEmbedder, DocumentIndexer, QdrantMu
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf-dir", default="data/samples")
-    parser.add_argument("--qdrant-path", help="On-disk embedded Qdrant (default: cloud from .env)")
+    parser.add_argument("--qdrant-url", help="Qdrant server URL (default: cloud cluster from .env)")
     parser.add_argument("--bm25-path", default=".cache/bm25")
     parser.add_argument("--cache-dir", default=".cache/embeddings")
     parser.add_argument("--dpi", type=int, default=150)
@@ -28,7 +28,7 @@ def main():
     args = parser.parse_args()
 
     text_index = BM25Index(args.bm25_path)
-    store = QdrantMultivectorStore(path=args.qdrant_path)
+    store = QdrantMultivectorStore(url=args.qdrant_url)
     indexer = DocumentIndexer(embedder=ColQwenEmbedder(), store=store, text_index=text_index)
     indexer.setup()
 

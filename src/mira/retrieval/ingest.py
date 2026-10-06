@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from typing import Optional
+from itertools import batched
+from typing import Iterable, List, Optional
 from pathlib import Path
 from time import time
 
-from mira.pdf import iter_processed_pages
+from mira.pdf import ProcessedPage, iter_processed_pages
 from .colqwen import ColQwenEmbedder
 from .embeddings import generate_embeddings
 from .qdrant_store import QdrantMultivectorStore
@@ -63,7 +64,7 @@ class DocumentIndexer:
     ) -> IndexingResult:
         """
         Full pipeline: PDF → Process → Embed → Store.
-        
+
         Args:
             pdf_path: Path to PDF file
             document_id: Unique ID (default: filename)
@@ -71,45 +72,69 @@ class DocumentIndexer:
             batch_size: Batch size for embedding
             cache_dir: Optional cache directory
             chunk_size: Pages rendered and held in memory at once
-        
+
         Returns:
             IndexingResult with stats
         """
-        start_time = time()
-        
-        # Get document ID from filename
         if document_id is None:
             document_id = Path(pdf_path).stem
-        
+
         print(f"\n{'='*60}")
         print(f"Indexing: {pdf_path}")
         print(f"Document ID: {document_id}")
         print(f"{'='*60}\n")
-        
-        # Render/embed/store in chunks so a 700-page PDF isn't held in RAM at once
+
+        pages = (p for chunk in iter_processed_pages(pdf_path, dpi=dpi, chunk_size=chunk_size) for p in chunk)
+        return self.index_page_stream(pages, document_id, batch_size=batch_size,
+                                      cache_dir=cache_dir, chunk_size=chunk_size)
+
+    def index_page_stream(
+        self,
+        pages: Iterable[ProcessedPage],
+        document_id: str,
+        batch_size: int = 4,
+        cache_dir: Optional[str] = None,
+        chunk_size: int = 32
+    ) -> IndexingResult:
+        """
+        Index pages from any source (ViDoRe corpus, slides, ...) into Qdrant + BM25.
+
+        Args:
+            pages: Iterable of ProcessedPage (consumed chunk_size at a time, so a
+                generator that decodes images lazily keeps memory flat)
+            document_id: Unique ID, shared by the Qdrant payload and the BM25 key
+            batch_size: Batch size for embedding
+            cache_dir: Optional embedding cache directory
+            chunk_size: Pages embedded/stored per iteration
+
+        Returns:
+            IndexingResult with stats
+        """
+        start_time = time()
         page_count = 0
         total_patches = 0
         text_sources = {}
-        for pages in iter_processed_pages(pdf_path, dpi=dpi, chunk_size=chunk_size):
-            print(f"Pages {pages[0].page_num}-{pages[-1].page_num}")
-            page_count += len(pages)
-            
+        for chunk_tuple in batched(pages, chunk_size):
+            chunk: List[ProcessedPage] = list(chunk_tuple)
+            print(f"Pages {chunk[0].page_num}-{chunk[-1].page_num}")
+            page_count += len(chunk)
+
             embeddings = generate_embeddings(
-                pages=pages,
+                pages=chunk,
                 embedder=self.embedder,
                 batch_size=batch_size,
                 document_id=document_id,
                 cache_dir=cache_dir
             )
-            self.store.upsert_pages(embeddings, [page.text for page in pages])
-            self.text_index.add_pages(document_id, [(page.page_num, page.text) for page in pages])
-            for page_emb, page in zip(embeddings, pages):
+            self.store.upsert_pages(embeddings, [page.text for page in chunk])
+            self.text_index.add_pages(document_id, [(page.page_num, page.text) for page in chunk])
+            for page_emb, page in zip(embeddings, chunk):
                 total_patches += page_emb.embeddings.shape[0]
                 text_sources[page.text_source] = text_sources.get(page.text_source, 0) + 1
-        
+
         self.text_index.save()
         duration = time() - start_time
-        
+
         result = IndexingResult(
             document_id=document_id,
             pages_indexed=page_count,
@@ -117,7 +142,7 @@ class DocumentIndexer:
             duration_seconds=duration,
             text_source_distribution=text_sources
         )
-        
+
         print(f"\n{'='*60}")
         print(f"Indexing Complete!")
         print(f"  Pages: {result.pages_indexed}")
@@ -125,5 +150,5 @@ class DocumentIndexer:
         print(f"  Duration: {result.duration_seconds:.1f}s")
         print(f"  Text sources: {result.text_source_distribution}")
         print(f"{'='*60}\n")
-        
+
         return result

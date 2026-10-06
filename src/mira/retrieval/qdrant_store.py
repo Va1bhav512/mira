@@ -7,7 +7,8 @@ from qdrant_client.models import (
     PointStruct,
     Filter,
     FieldCondition,
-    MatchValue
+    MatchValue,
+    SearchParams
 )
 from typing import List, Optional, Dict, Any
 import os
@@ -19,6 +20,11 @@ from dataclasses import dataclass
 from .embeddings import PageEmbedding
 
 load_dotenv()
+
+
+def page_id(document_id: str, page_num: int) -> str:
+    """Qdrant point id for a page. Qdrant only accepts unsigned ints or UUIDs; uuid5 keeps re-indexing idempotent."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document_id}/page/{page_num}"))
 
 
 @dataclass
@@ -37,35 +43,32 @@ class QdrantMultivectorStore:
         self,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
-        collection_name: str = "mira_pages",
-        path: Optional[str] = None
+        collection_name: str = "mira_pages"
     ):
         """
         Initialize Qdrant client.
-        
+
         Args:
-            url: Qdrant cluster URL (default: from env)
-            api_key: Qdrant API key (default: from env)
+            url: Qdrant URL, or ":memory:" for an in-process store in tests
+                (default: QDRANT_CLUSTER_ENDPOINT from env)
+            api_key: Qdrant API key (default: from env, only when url is too)
             collection_name: Name of collection to use
-            path: Directory for an embedded on-disk Qdrant (no server, no network);
-                takes precedence over url
+
+        No embedded on-disk mode: it unpickles every point into RAM and got OOM-killed
+        opening 2,674 pages on a 12 GB VM. Run a Qdrant server instead.
         """
         self.collection_name = collection_name
-
-        if path:
-            # ponytail: embedded mode is brute-force (~1.3 s/query at 2.7k pages); fine for eval runs
-            self.client = QdrantClient(path=path)
-            return
 
         if url == ":memory:":
             # In-process Qdrant for tests; QdrantClient takes this via location, not url
             self.client = QdrantClient(location=":memory:")
             return
 
-        # Get from environment if not provided
-        url = url or os.getenv('QDRANT_CLUSTER_ENDPOINT')
-        api_key = api_key or os.getenv('QDRANT_CLUSTER_API_KEY')
-        
+        # The env API key belongs to the env cluster; never send it to an explicitly given url
+        if url is None:
+            url = os.getenv('QDRANT_CLUSTER_ENDPOINT')
+            api_key = api_key or os.getenv('QDRANT_CLUSTER_API_KEY')
+
         if not url:
             # Fallback to local Qdrant
             url = "http://localhost:6333"
@@ -125,8 +128,7 @@ class QdrantMultivectorStore:
         """
         points = [
             PointStruct(
-                # Qdrant only accepts unsigned ints or UUIDs; uuid5 keeps re-indexing idempotent
-                id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{emb.document_id}/page/{emb.page_num}")),
+                id=page_id(emb.document_id, emb.page_num),
                 vector=emb.embeddings.tolist(),
                 payload={
                     "document_id": emb.document_id,
@@ -184,7 +186,10 @@ class QdrantMultivectorStore:
             collection_name=self.collection_name,
             query=query_embedding.tolist(),
             limit=top_k,
-            query_filter=query_filter
+            query_filter=query_filter,
+            # Exact MaxSim over every page, not HNSW-approximate.
+            # ponytail: full scan, fine at a few thousand pages; HNSW/coarse stage if it grows 100x
+            search_params=SearchParams(exact=True)
         )
         
         # Convert to SearchResult
@@ -199,6 +204,29 @@ class QdrantMultivectorStore:
         
         return search_results
     
+    def get_page(self, document_id: str, page_num: int) -> PageEmbedding:
+        """
+        Fetch one indexed page's stored multivector and layout, for evidence heatmaps.
+
+        Raises:
+            KeyError: if the page isn't indexed
+        """
+        points = self.client.retrieve(
+            self.collection_name, ids=[page_id(document_id, page_num)], with_vectors=True
+        )
+        if not points:
+            raise KeyError(f"page not indexed: {document_id} p{page_num}")
+        p = points[0].payload
+        return PageEmbedding(
+            document_id=document_id,
+            page_num=page_num,
+            embeddings=np.asarray(points[0].vector, dtype=np.float32),
+            patch_grid=(p["patch_grid"]["rows"], p["patch_grid"]["cols"]),
+            image_token_start=p["image_token_start"],
+            image_dims=(p["image_dims"]["width"], p["image_dims"]["height"]),
+            text_source=p["text_source"],
+        )
+
     def delete_document(self, document_id: str):
         """Delete all pages for a document."""
         from qdrant_client.models import Filter, FieldCondition, MatchValue

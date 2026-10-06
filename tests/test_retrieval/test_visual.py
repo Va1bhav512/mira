@@ -3,6 +3,7 @@
 import pytest
 from pathlib import Path
 import numpy as np
+import torch
 
 from mira.retrieval import (
     ColQwenEmbedder,
@@ -55,6 +56,19 @@ class TestColQwenEmbedder:
             assert rows * cols > 100  # Many patches
             assert start + rows * cols <= emb.shape[0]
             assert np.abs(emb).sum(axis=1).min() > 0  # no zero padding rows
+    
+    @pytest.mark.slow
+    def test_fp16_overflow_page_is_recovered(self, embedder):
+        """Page 251 of the scanned NASA report overflows to NaN in fp16 on a T4."""
+        pdf = Path(__file__).parents[2] / "data" / "samples" / "19700022229.pdf"
+        if not pdf.exists():
+            pytest.skip("19700022229.pdf not available")
+        from mira.pdf import render_page
+        
+        (emb, _, _), = embedder.embed_images([render_page(str(pdf), 251, dpi=150)])
+        
+        assert not np.isnan(emb).any()
+        assert embedder.model.dtype == torch.float16  # fp16 restored after the bf16 retry
 
 
 class TestQdrantStore:
@@ -105,6 +119,46 @@ class TestQdrantStore:
         assert results[0].document_id == "test_doc"
 
 
+def _stub_embedder(nan_in_fp16=(), nan_in_bf16=()):
+    """ColQwenEmbedder with the model stubbed out: chosen inputs embed to NaN per dtype."""
+    e = ColQwenEmbedder.__new__(ColQwenEmbedder)
+    e.dtype = e.current = torch.float16
+    e.loads, e.calls = [], []
+    
+    def load(dtype):
+        e.loads.append(dtype)
+        e.current = dtype
+    
+    def batch(images):
+        e.calls.append(list(images))
+        nan = nan_in_fp16 if e.current == torch.float16 else nan_in_bf16
+        return [(np.full((3, 128), np.nan if img in nan else 1.0, np.float32), (1, 1), 0) for img in images]
+    
+    e._load, e._embed_image_batch = load, batch
+    return e
+
+
+class TestNaNFallback:
+    
+    def test_only_nan_images_redone_in_bf16(self):
+        e = _stub_embedder(nan_in_fp16={"b"})
+        results = e.embed_images(["a", "b", "c"], batch_size=3)
+        assert not any(np.isnan(emb).any() for emb, _, _ in results)
+        assert e.calls == [["a", "b", "c"], ["b"]]
+        assert e.loads == [torch.bfloat16, torch.float16]
+    
+    def test_no_nan_no_reload(self):
+        e = _stub_embedder()
+        e.embed_images(["a", "b"])
+        assert e.loads == []
+    
+    def test_raises_if_still_nan_and_restores_fp16(self):
+        e = _stub_embedder(nan_in_fp16={"b"}, nan_in_bf16={"b"})
+        with pytest.raises(ValueError):
+            e.embed_images(["a", "b"])
+        assert e.current == torch.float16
+
+
 class TestEmbeddingGeneration:
     """Tests for embedding generation."""
     
@@ -125,6 +179,24 @@ class TestEmbeddingGeneration:
         assert patches.shape == (4, 5, 128)
         assert np.array_equal(patches[0, 0], embeddings[3])
         assert np.array_equal(patches[3, 4], embeddings[22])
+    
+    def test_cache_round_trip_is_lossless_for_fp16_outputs(self, tmp_path):
+        """Cache stores fp16; embeddings from the fp16 model must come back exactly, as float32."""
+        from mira.retrieval.embeddings import _load_from_cache, _save_to_cache
+        rng = np.random.default_rng(0)
+        emb = rng.standard_normal((5, 128)).astype(np.float16).astype(np.float32)
+        _save_to_cache(tmp_path, PageEmbedding("d", 0, emb, (2, 2), 1, (10, 10), "native"))
+
+        loaded = _load_from_cache(tmp_path, 0)
+        assert loaded.embeddings.dtype == np.float32
+        assert np.array_equal(loaded.embeddings, emb)
+
+    def test_cache_rejects_nan_embeddings(self, tmp_path):
+        """A page cached before the NaN fallback existed must be recomputed, not reused."""
+        from mira.retrieval.embeddings import _load_from_cache, _save_to_cache
+        emb = np.full((5, 128), np.nan, np.float32)
+        _save_to_cache(tmp_path, PageEmbedding("d", 0, emb, (2, 2), 1, (10, 10), "native"))
+        assert _load_from_cache(tmp_path, 0) is None
 
 
 @pytest.fixture

@@ -126,10 +126,10 @@ Render Pages        Visual Index        Text Index
 | 1 | PDF processing | Renderer, text extraction, OCR fallback | ✅ Complete |
 | 2 | Visual indexing | ColQwen embeddings, Qdrant setup | ✅ Complete (verified on Colab T4) |
 | 3 | Text indexing | BM25 implementation, native text pipeline | ✅ Complete |
-| 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | 🔄 Built; needs labelled queries to tune and evaluate |
+| 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | ✅ Built and evaluated ([results](data/eval/results.md)) |
 | 5 | Evidence cropping | Heatmaps, spatial aggregation, hi-res crop | Planned |
 | 6 | Generation | VLM serving, citations, API | Planned |
-| 7 | Evaluation | ViDoRe/RAGAS benchmarks, ablations | Planned |
+| 7 | Evaluation | Custom ablation ✅; ViDoRe V3 harness built, first run pending | 🔄 In progress |
 
 ---
 
@@ -195,6 +195,8 @@ uv run pytest tests/ --cov=mira
 # GPU tests + index/search end-to-end on a Colab T4, using your local
 # working tree (needs the colab CLI and Qdrant creds in .env)
 scripts/test_colab.sh            # session "mira"; reused if already running
+scripts/test_colab.sh --eval     # full-corpus custom-set eval
+scripts/test_colab.sh --eval-vidore computer_science,hr   # ViDoRe V3 eval
 colab stop -s mira               # release the VM when done
 
 # Phase 1 stats over every PDF in data/samples (CPU, ~2 min)

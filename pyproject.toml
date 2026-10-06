@@ -13,9 +13,9 @@ dependencies = [
     "qdrant-client>=1.19.0",
     "transformers>=5.17.0",
     "torch>=2.4.0",
-    "tqdm>=4.66.0",
     "bm25s>=0.3.12",
     "pystemmer>=3.1.0",
+    "scipy>=1.13.0",
 ]
 
 [build-system]
@@ -29,6 +29,12 @@ packages = ["src/mira"]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
+]
+vidore = [
+    "datasets>=3.0.0",
+]
+generation = [
+    "bitsandbytes>=0.45.0",
 ]
 
 [tool.pytest.ini_options]

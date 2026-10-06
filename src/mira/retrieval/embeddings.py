@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 from pathlib import Path
 import json
-from tqdm import tqdm
 
 from mira.pdf import ProcessedPage
 from .colqwen import ColQwenEmbedder
@@ -62,11 +61,13 @@ def generate_embeddings(
     if len(results):
         print(f"Loaded {len(results)} embeddings from cache")
 
-    for i in tqdm(range(0, len(to_embed), batch_size), desc="Embedding pages", disable=not to_embed):
-        batch_pages = to_embed[i:i + batch_size]
-        batch_emb = embedder.embed_images([p.image for p in batch_pages], batch_size=len(batch_pages))
+    # One call for all uncached pages: embed_images batches internally, and its bf16
+    # NaN fallback then reloads the model at most once per call instead of once per batch
+    if to_embed:
+        print(f"Embedding {len(to_embed)} pages")
+        embedded = embedder.embed_images([p.image for p in to_embed], batch_size=batch_size)
 
-        for (emb, patch_grid, image_token_start), page in zip(batch_emb, batch_pages):
+        for (emb, patch_grid, image_token_start), page in zip(embedded, to_embed, strict=True):
             page_emb = PageEmbedding(
                 document_id=document_id,
                 page_num=page.page_num,
@@ -86,7 +87,9 @@ def generate_embeddings(
 def _save_to_cache(cache_path: Path, emb: PageEmbedding):
     """Save one page's embedding to cache."""
     cache_path.mkdir(parents=True, exist_ok=True)
-    np.save(cache_path / f"page_{emb.page_num:04d}.npy", emb.embeddings)
+    # fp16 halves the cache (~500 MB for the sample corpus, so it can be checkpointed off Colab).
+    # Lossless for fp16-model outputs; bf16-fallback pages lose only sub-1e-4 detail.
+    np.save(cache_path / f"page_{emb.page_num:04d}.npy", emb.embeddings.astype(np.float16))
     with open(cache_path / f"page_{emb.page_num:04d}_meta.json", 'w') as f:
         json.dump({
             'document_id': emb.document_id,
@@ -112,10 +115,15 @@ def _load_from_cache(cache_path: Path, page_num: int) -> Optional[PageEmbedding]
     if 'image_token_start' not in meta:
         return None
 
+    # Caches written before the bf16 NaN fallback can hold fp16-overflowed pages
+    embeddings = np.load(emb_path).astype(np.float32)
+    if np.isnan(embeddings).any():
+        return None
+
     return PageEmbedding(
         document_id=meta['document_id'],
         page_num=meta['page_num'],
-        embeddings=np.load(emb_path),
+        embeddings=embeddings,
         patch_grid=tuple(meta['patch_grid']),
         image_token_start=meta['image_token_start'],
         image_dims=tuple(meta['image_dims']),

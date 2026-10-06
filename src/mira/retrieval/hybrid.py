@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
+
 from .colqwen import ColQwenEmbedder
 from .lexical import BM25Index
 from .qdrant_store import QdrantMultivectorStore, SearchResult
@@ -154,18 +156,43 @@ class HybridRetriever:
         Returns:
             HybridResults, best first
         """
-        if mode not in MODES:
-            raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+        return self.search_modes(query, top_k, document_filter, modes=(mode,))[mode]
+
+    def search_modes(
+        self,
+        query: str,
+        top_k: int = 10,
+        document_filter: Optional[str] = None,
+        modes: Tuple[str, ...] = MODES,
+        query_embedding: Optional[np.ndarray] = None,
+    ) -> Dict[str, List[HybridResult]]:
+        """
+        Like search(), for several modes at once: each channel is queried once, then fused per mode.
+        Pass query_embedding when the caller already has it (evidence cropping reuses it).
+        """
+        for mode in modes:
+            if mode not in MODES:
+                raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
 
         visual: List[SearchResult] = []
         lexical: List[SearchResult] = []
-        if mode != "lexical":
+        if any(m != "lexical" for m in modes):
+            if query_embedding is None:
+                query_embedding = self.embedder.embed_query(query)
             visual = self.store.search(
-                self.embedder.embed_query(query), top_k=self.candidates, document_filter=document_filter
+                query_embedding, top_k=self.candidates, document_filter=document_filter
             )
-        if mode != "visual":
+        if any(m != "visual" for m in modes):
             lexical = self.text_index.search(query, top_k=self.candidates, document_filter=document_filter)
 
+        return {
+            m: self._fuse(query, visual if m != "lexical" else [], lexical if m != "visual" else [], m, top_k)
+            for m in modes
+        }
+
+    def _fuse(
+        self, query: str, visual: List[SearchResult], lexical: List[SearchResult], mode: str, top_k: int
+    ) -> List[HybridResult]:
         if mode == "adaptive":
             w = query_weights(query)
             weights = [w.visual, w.lexical]
