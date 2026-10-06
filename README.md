@@ -128,7 +128,7 @@ Render Pages        Visual Index        Text Index
 | 3 | Text indexing | BM25 implementation, native text pipeline | ✅ Complete |
 | 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | ✅ Built and evaluated ([results](data/eval/results.md)) |
 | 5 | Evidence cropping | Heatmaps, spatial aggregation, hi-res crop | ✅ Built, GPU-verified; crops untuned ([V3 results](data/eval/vidore_results.md)) |
-| 6 | Generation | VLM serving, citations, API | ✅ Built, GPU-verified; correctness judge pending |
+| 6 | Generation | VLM serving, citations, API | 🔄 Answers + citations built, GPU-verified; API not built; correctness judge pending |
 | 7 | Evaluation | Custom ablation ✅; ViDoRe V3 hr + computer_science ✅ ([results](data/eval/vidore_results.md)) | 🔄 In progress |
 
 ---
