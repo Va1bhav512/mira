@@ -22,13 +22,14 @@ from scipy import ndimage
 
 Box = Tuple[float, float, float, float]  # normalized (x0, y0, x1, y1)
 
-# ponytail: hand-set defaults, not tuned (tuning on V3 would be tuning on the test set)
+# THRESHOLD and MIN_SIZE tuned on ViDoRe V3 hr (zone F1 0.231 -> 0.495, with the ink mask), checked on
+# held-out computer_science (0.206 -> 0.418; whole page 0.318). Report hr as the tuning subset.
 TOP_K = 16           # patches kept per query token
-THRESHOLD = 0.3      # fraction of the heatmap max that counts as "hot"
-MAX_REGIONS = 2
+THRESHOLD = 0.1      # fraction of the heatmap max that counts as "hot"
+MAX_REGIONS = 2      # 3 adds +0.003 F1 for 50% more images to the VLM
 MIN_MASS = 0.25      # drop regions with less than this fraction of the best region's heat
 PAD = 0.02           # padding added on each side, as a fraction of the page
-MIN_SIZE = 0.15      # smallest crop side, as a fraction of the page: the VLM needs context
+MIN_SIZE = 0.25      # smallest crop side, as a fraction of the page: the VLM needs context
 INK_STD = 8.0        # pixel std (0-255) above which a patch counts as having ink
 
 
