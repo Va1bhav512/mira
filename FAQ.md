@@ -544,6 +544,29 @@ Can compare 3B vs 7B in evaluation if hardware permits, but retrieval experiment
 
 ---
 
+### How do the API and demo work?
+
+`src/mira/serve.py` runs one process with both:
+- **`POST /query`** (FastAPI) returns:
+  - the answer and the cited sources (document, page, box),
+  - every evidence region (optionally with the crop image),
+  - the retrieved pages with their visual and BM25 ranks,
+  - the adaptive fusion weights and what triggered them,
+  - per-stage timings.
+- **`/ui`** (Gradio) shows the same for a question:
+  - the answer and its citations,
+  - each retrieved page with the query heatmap (red) and evidence boxes (green),
+  - the crops the VLM actually read,
+  - a "why these pages" table.
+
+  Dropdowns switch the retrieval mode and the crop strategy, so the ablation can be shown live.
+
+Both use the same `answer_query` the evals use, so the demo shows what was measured. On Kaggle,
+`scripts/kaggle_demo.sh` restores the index saved by the full-eval run (a Qdrant snapshot plus BM25)
+instead of re-embedding, and serves the UI behind a public Gradio link.
+
+---
+
 ## Evaluation
 
 ### What datasets for evaluation?
@@ -574,16 +597,25 @@ ViDoRe V1 is near-saturated for ColQwen2.5 (~89 nDCG@5). V2 (ESG, biomedical, ec
 
 ### What metrics?
 
-Retrieval:
-- Recall@5, Recall@10
-- nDCG@10
-- MRR (Mean Reciprocal Rank)
-- "Exact ID recall" (custom: if query contains identifier, did we retrieve the exact page?)
+What the evals actually report:
 
-Generation:
-- RAGAS faithfulness (answer supported by evidence)
-- RAGAS answer correctness
-- Custom: citation accuracy (bbox actually contains answer)
+| Stage | Metric | Script |
+|---|---|---|
+| Retrieval, custom set | R@1/5/10, MRR, nDCG@10 per query type; paired bootstrap adaptive vs fixed | `eval_retrieval.py` |
+| Retrieval, ViDoRe V3 | R@5/10, MRR, **graded nDCG@5** (V3's headline), nDCG@10, by query format and content type; bootstrap | `eval_retrieval.py --vidore` |
+| Cropping | Zone F1 vs annotator boxes on gold pages (V3 protocol; human ceiling 0.602) | `eval_cropping.py` |
+| Generation | Share of answers citing a gold page; latency | `eval_generation.py` |
+| Answer correctness | Local judge: correct / partial / incorrect vs V3's reference answer | `judge_answers.py` |
+
+RAGAS isn't used. Its metrics need an LLM judge too, and V3 already ships human reference answers.
+
+### How are generated answers scored for correctness?
+
+`scripts/judge_answers.py` runs a **local** judge, Qwen2.5-7B-Instruct in 4-bit on the same T4. It needs no API key and costs nothing. The judge sees the question, V3's human reference answer and Mira's answer (text only), and returns `correct`, `partial` or `incorrect` with a one-line reason. The score is correct = 1, partial = 0.5.
+
+Caveats to state in the report:
+- **A 7B judge is weaker than a frontier API model**, and it hasn't been validated against human grades yet. To fix that, hand-grade ~30 judged answers (the `.judged.jsonl` files have the reason for each) and report the agreement.
+- **The judge uses only text**, so it can't tell a lucky guess from a grounded answer. The "cites a gold page" column covers grounding.
 
 ### How do we check retrieval results? How should the labelled queries be written?
 
