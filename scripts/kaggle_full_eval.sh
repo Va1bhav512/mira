@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# The full evaluation in one Kaggle run, plus the demo index:
+# The full evaluation in one Kaggle run, plus an end-to-end demo check:
 #   scripts/test_kaggle.sh --dataset <owner>/mira-custom-embeddings \
 #     --run 'bash scripts/kaggle_full_eval.sh' mira-full
 # Runs inside test_kaggle.sh's --run mode: $OUT is kept (downloaded to .cache/kaggle/mira-full/),
 # $CACHE is scratch, Qdrant is up on localhost:6333.
 #
-# 1. Custom corpus: index (from the embedding checkpoint dataset if mounted), retrieval eval,
-#    and a Qdrant snapshot + BM25 index for the demo.
+# 1. Custom corpus: index (from the embedding checkpoint dataset if mounted), retrieval eval.
 # 2. ViDoRe V3 subsets: index, retrieval eval, cropping eval, generation on GEN_LIMIT queries.
 # 3. Judge every generated answer.
+# 4. Serve the API + UI over the custom corpus and run demo_smoke.py against it.
 # Every retrieval eval also dumps per-query channel rankings, so fusion can be re-scored on CPU.
 set -euo pipefail
 URL="--qdrant-url http://localhost:6333"
 SUBSETS=${SUBSETS:-hr computer_science pharmaceuticals}
 GEN_LIMIT=${GEN_LIMIT:-60}
-mkdir -p "$CACHE" "$OUT/index"
+mkdir -p "$CACHE"
 # Evals after indexing are allowed to fail without losing the steps after them; the run still fails at the end
 failed=0
 try() { "$@" || { echo "STEP FAILED: $*"; failed=1; }; }
@@ -22,11 +22,8 @@ try() { "$@" || { echo "STEP FAILED: $*"; failed=1; }; }
 # Kaggle extracts uploaded tarballs, so the checkpoint dataset mounts as an embeddings/ folder
 emb=$(find /kaggle/input -type d -name embeddings 2>/dev/null | head -1)
 if [[ -n $emb ]]; then cp -r "$emb" "$CACHE/embeddings"; fi
-python scripts/index_corpus.py $URL --bm25-path "$OUT/index/bm25" --cache-dir "$CACHE/embeddings"
-python scripts/eval_retrieval.py $URL --bm25-path "$OUT/index/bm25" --dump-rankings "$OUT/rankings_custom.jsonl"
-name=$(curl -sf -X POST localhost:6333/collections/mira_pages/snapshots | python -c 'import json,sys; print(json.load(sys.stdin)["result"]["name"])')
-curl -sf "localhost:6333/collections/mira_pages/snapshots/$name" -o "$OUT/index/mira_pages.snapshot"
-ls -la "$OUT/index"
+python scripts/index_corpus.py $URL --bm25-path "$CACHE/bm25" --cache-dir "$CACHE/embeddings"
+python scripts/eval_retrieval.py $URL --bm25-path "$CACHE/bm25" --dump-rankings "$OUT/rankings_custom.jsonl"
 
 for s in $SUBSETS; do
   bm25="$CACHE/bm25_vidore/$s"
@@ -39,7 +36,7 @@ done
 try python scripts/judge_answers.py "$OUT"/generation_*.jsonl
 
 # Demo end to end on the GPU: API + UI over the custom corpus (overlays saved for inspection)
-python -m mira.serve --qdrant-url http://localhost:6333 --bm25-path "$OUT/index/bm25" > "$OUT/serve.log" 2>&1 &
+python -m mira.serve --qdrant-url http://localhost:6333 --bm25-path "$CACHE/bm25" > "$OUT/serve.log" 2>&1 &
 server=$!
 for _ in $(seq 120); do curl -sf localhost:7860/docs >/dev/null && break; sleep 5; done
 try python scripts/demo_smoke.py --out "$OUT/demo_smoke"

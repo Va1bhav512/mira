@@ -211,7 +211,7 @@ ColQwen tests skip locally unless the GPU has >=10 GB VRAM.
 scripts/test_kaggle.sh                                    # pytest + example on a T4
 scripts/test_kaggle.sh --eval-vidore hr,computer_science  # ViDoRe retrieval/cropping/generation
 scripts/test_kaggle.sh --dataset <you>/mira-custom-embeddings \
-    --run 'bash scripts/kaggle_full_eval.sh' mira-full    # everything, + the demo index
+    --run 'bash scripts/kaggle_full_eval.sh' mira-full    # everything + a demo check
 kaggle quota                                              # GPU hours left this week
 ```
 
@@ -230,8 +230,8 @@ uv run python -m mira.serve --qdrant-url http://localhost:6333 --bm25-path .cach
 #                boxes, the crops the VLM read, visual/BM25 ranks and fusion weights
 ```
 
-On Kaggle, run the demo in a notebook (GPU T4, Internet on, inputs `<you>/mira-samples` and the
-`mira-full` notebook output):
+On Kaggle, run the demo in a notebook (GPU T4, Internet on, inputs `<you>/mira-samples` and
+`<you>/mira-custom-embeddings`; the index is rebuilt from the cached embeddings in ~6 min):
 
 ```
 !git clone -q --depth 1 https://github.com/Va1bhav512/mira /kaggle/working/mira

@@ -560,8 +560,9 @@ Can compare 3B vs 7B in evaluation if hardware permits, but retrieval experiment
   Dropdowns switch the retrieval mode and the crop strategy, so the ablation can be shown live.
 
 Both use the same `answer_query` the evals use, so the demo shows what was measured. On Kaggle,
-`scripts/kaggle_demo.sh` restores the index saved by the full-eval run (a Qdrant snapshot plus BM25)
-instead of re-embedding, and serves the UI behind a public Gradio link.
+`scripts/kaggle_demo.sh` rebuilds the index from the cached page embeddings (~6 min, no ColQwen
+pass) and serves the UI behind a public Gradio link. It doesn't reuse a snapshot from the full-eval
+run because Kaggle only mounts a kernel's output when that kernel's latest version succeeded.
 
 ---
 

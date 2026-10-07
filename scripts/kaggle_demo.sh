@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Start the Mira demo in a Kaggle notebook, from the index saved by the full-eval kernel.
+# Start the Mira demo in a Kaggle notebook. The index is rebuilt from the cached page
+# embeddings (~6 min, no re-embedding); Kaggle can't mount the output of a failed kernel
+# version, so a snapshot in mira-full's output isn't a dependable source.
 #
 # One-time notebook setup (Kaggle UI): Accelerator "GPU T4", Internet on, and under
-# "Add Input" add the dataset <you>/mira-samples and the notebook output of <you>/mira-full.
+# "Add Input" add the datasets <you>/mira-samples and <you>/mira-custom-embeddings.
 # Then in a cell:
 #   !git clone -q --depth 1 https://github.com/Va1bhav512/mira /kaggle/working/mira
 #   !bash /kaggle/working/mira/scripts/kaggle_demo.sh
 # It prints a public https://*.gradio.live link (valid while the notebook runs; ~3 min to start).
 #
 # --smoke: serve without the share link and run scripts/demo_smoke.py instead (used by the
-# batch runner to test this script: test_kaggle.sh --kernel-output <you>/mira-full --run ...).
+# batch runner to test this script: test_kaggle.sh --dataset <you>/mira-custom-embeddings --run ...).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CACHE=${CACHE:-/tmp/cache}
 mkdir -p "$CACHE"
 
-snapshot=$(find /kaggle/input -name mira_pages.snapshot | head -1)
-bm25=$(dirname "$(find /kaggle/input -path '*index/bm25/pages.jsonl' | head -1)")
+# Kaggle extracts uploaded tarballs, so the checkpoint dataset mounts as an embeddings/ folder
+emb=$(find /kaggle/input -type d -name embeddings 2>/dev/null | head -1)
 samples=$(dirname "$(find /kaggle/input -name test.pdf | head -1)")
-: "${snapshot:?add the mira-full notebook output as an input}" "${samples:?add the mira-samples dataset as an input}"
+: "${emb:?add the mira-custom-embeddings dataset as an input}" "${samples:?add the mira-samples dataset as an input}"
+bm25=$CACHE/bm25
 
 if [[ ! -e data/samples ]]; then ln -s "$samples" data/samples; fi
 if ! python -c "import mira.serve" 2>/dev/null; then
@@ -32,9 +35,9 @@ if ! curl -sf localhost:6333/readyz >/dev/null; then
   QDRANT__STORAGE__STORAGE_PATH="$CACHE/qdrant" nohup "$CACHE/qdrant-bin/qdrant" > "$CACHE/qdrant.log" 2>&1 &
   for _ in $(seq 60); do curl -sf localhost:6333/readyz >/dev/null && break; sleep 1; done
 fi
-if ! curl -sf localhost:6333/collections/mira_pages >/dev/null; then
-  echo "Restoring the index snapshot ($(du -h "$snapshot" | cut -f1))..."
-  curl -sf -X POST "localhost:6333/collections/mira_pages/snapshots/upload?priority=snapshot" -F "snapshot=@$snapshot" >/dev/null
+if ! curl -sf localhost:6333/collections/mira_pages >/dev/null || [[ ! -e $bm25/pages.jsonl ]]; then
+  [[ -d $CACHE/embeddings ]] || cp -r "$emb" "$CACHE/embeddings"
+  python scripts/index_corpus.py --qdrant-url http://localhost:6333 --bm25-path "$bm25" --cache-dir "$CACHE/embeddings"
 fi
 
 if [[ ${1:-} == --smoke ]]; then
