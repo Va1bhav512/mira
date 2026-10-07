@@ -106,7 +106,8 @@ def build_ui(mira: Mira, examples: List[str]):
     def run(question, mode, strategy, top_pages, document):
         result = mira.query(question, mode, strategy, int(top_pages), None if document == "All documents" else document)
         cited = "\n".join(f"- {s['document']}, page {s['page'] + 1}" for s in result["sources"]) or "- (none)"
-        answer = f"### {result['answer']}\n\n**Cited evidence**\n{cited}"
+        text = result["answer"] or "_(the model returned no answer)_"
+        answer = f"### Answer\n{text}\n\n### Cited evidence\n{cited}"
         crops = [(e.image, f"{e.id}: {e.document_id} p.{e.page_num + 1}") for e in result["_answer"].evidence]
         table = [[h["document"], h["page"] + 1, h["score"], h["visual_rank"], h["lexical_rank"]] for h in result["retrieved"]]
         details = {"weights": result["weights"], "timings_s": result["timings"]}
