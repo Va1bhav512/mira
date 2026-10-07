@@ -35,8 +35,9 @@ def main():
 
         from mira.evaluation.vidore import build_relevance, corpus_keys
         ds = f"vidore/vidore_v3_{args.vidore}"
-        corpus = load_dataset(ds, data_dir="corpus", split="test")
-        light = corpus.remove_columns([c for c in corpus.column_names if c not in ("corpus_id", "doc_id", "page_number_in_doc")])
+        # Stream just the key columns: the corpus's page images are ~0.5 GB per subset and unused here
+        light = load_dataset(ds, data_dir="corpus", split="test", streaming=True,
+                             columns=["corpus_id", "doc_id", "page_number_in_doc"])
         grades = build_relevance(load_dataset(ds, data_dir="qrels", split="test"), corpus_keys(light))
         by_text = {q["query"]: grades.get(q["query_id"], {}) for q in load_dataset(ds, data_dir="queries", split="test")
                    if q["language"] == "english"}
