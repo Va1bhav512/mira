@@ -78,14 +78,14 @@ def fusion_figure(curves_json, out_png):
     import matplotlib.pyplot as plt
 
     curves = json.load(open(curves_json))
-    fig, ax = plt.subplots(figsize=(6, 3.6))
+    fig, ax = plt.subplots(figsize=(8.5, 3.6))
     for name, points in curves.items():
         xs, ys = zip(*points)
         ax.plot(xs, ys, marker="o", label=name)
     ax.set_xlabel("visual share of RRF weight (0 = BM25 only, 1 = ColQwen only)")
     ax.set_ylabel("nDCG")
     ax.grid(alpha=0.3)
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.01, 1))
     fig.tight_layout()
     fig.savefig(out_png, dpi=200)
     print(f"Saved {out_png}")
