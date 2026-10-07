@@ -348,7 +348,7 @@ Advantages:
 | Visual cue word (figure, chart, diagram, table, shown, ...) | `which chart shows revenue` | 1.5, 0.5 |
 | Both, or neither | `block diagram of the RP2040`, `how does attention work` | 1.0, 1.0 |
 
-Identifiers are detected by regex: hex (`0x2D`), letter/digit mixes (`STM32F401RE`, `I2C`, `3V3`), and snake-case pin names (`USB_VBUS`). The weights then go into weighted RRF:
+Identifiers are detected by regex: hex (`0x2D`), letter/digit mixes (`STM32F401RE`, `I2C`, `3V3`), snake-case pin names (`USB_VBUS`), and all-caps names of 5+ letters (`TXPOWER`, case-sensitive so `EU` and `OECD` don't count). Quantities, ordinals, quarters and fiscal years (`2ns`, `100mA`, `1950s`, `Q4`, `FY2024`) are excluded: on ViDoRe they were the main source of false "identifiers". The weights then go into weighted RRF:
 
 ```
 score(page) = w_visual / (60 + rank_visual) + w_lexical / (60 + rank_lexical)
@@ -356,9 +356,27 @@ score(page) = w_visual / (60 + rank_visual) + w_lexical / (60 + rank_lexical)
 
 `HybridRetriever.search(query, mode=...)` supports four modes for the ablation: `adaptive`, `fixed` (1:1), `visual` only, `lexical` only. Each result keeps both channel ranks, so you can see *why* a page won.
 
-The shift of 0.5 is hand-set. It should be tuned (and adaptive shown to beat fixed) on the labelled query set with `scripts/eval_retrieval.py`; that comparison is this contribution's evidence.
+The shift of 0.5 was hand-set before any evaluation and never tuned.
 
 This is the first novel contribution of Mira.
+
+### Did adaptive fusion work?
+
+On the datasheets, yes; on ViDoRe, no. Full numbers: `data/eval/results.md`, `data/eval/vidore_results.md`.
+
+| | Custom datasheets (nDCG@10) | ViDoRe V3, 3 subsets (nDCG@5) |
+|---|---|---|
+| adaptive vs fixed 1:1 | **+0.020** (p = 0.10, n = 47) | −0.002 to −0.005 |
+| best mode | adaptive (0.844) | visual only |
+| best fixed weighting | 1:1 | about 4:1 visual |
+| queries where the rule shifts weights | 47% | 6–16% |
+
+Why the difference:
+- The datasheets are full of part numbers and register names that BM25 matches exactly, so it is a strong second channel.
+- ViDoRe's queries are natural-language questions, BM25 is 0.07–0.11 nDCG weaker than ColQwen there, and ColQwen was trained on ViDoRe-style pages.
+- The rule only moves weights *around* 1:1, per query. It never learns that a whole corpus wants a visual lean.
+
+`scripts/rescore_fusion.py` re-scores any weighting on CPU from the rankings dumped by the eval run, which is how the sweep in `docs/figures/fusion_weights.png` was made. The next step is a corpus-level centre weight, then the per-query shift.
 
 ### Why two-stage retrieval (coarse → exact MaxSim)? Is it implemented?
 
@@ -613,7 +631,7 @@ RAGAS isn't used. Its metrics need an LLM judge too, and V3 already ships human 
 `scripts/judge_answers.py` runs a **local** judge, Qwen2.5-7B-Instruct in 4-bit on the same T4. It needs no API key and costs nothing. The judge sees the question, V3's human reference answer and Mira's answer (text only), and returns `correct`, `partial` or `incorrect` with a one-line reason. The score is correct = 1, partial = 0.5.
 
 Caveats to state in the report:
-- **A 7B judge is weaker than a frontier API model**, and it hasn't been validated against human grades yet. To fix that, hand-grade ~30 judged answers (the `.judged.jsonl` files have the reason for each) and report the agreement.
+- **A 7B judge is weaker than a frontier API model.** A check of 30 random judged answers by a second model (Claude) agreed on 25 (83%). The judge was harsh on terse correct answers ("Yes.", "Since 2014" for "how many years by 2024") and lenient on fluent but generic ones. That is LLM–LLM agreement, not human validation: hand-grading ~30 answers yourself (the `.judged.jsonl` files have the reason for each) is what makes the absolute scores citable. The paired strategy comparisons hold up better, since every strategy is graded by the same judge on the same queries.
 - **The judge uses only text**, so it can't tell a lucky guess from a grounded answer. The "cites a gold page" column covers grounding.
 
 ### How do we check retrieval results? How should the labelled queries be written?
