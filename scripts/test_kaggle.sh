@@ -16,7 +16,8 @@
 #   Log saved to data/eval/kaggle_<mode>.log; generation answers to data/eval/generation_<subset>.jsonl.
 #
 # What goes to Kaggle (private):
-#   - the code, embedded in the kernel script (git ls-files; .env is gitignored and also excluded)
+#   - the code, embedded in the kernel script (git ls-files minus docs and past eval outputs,
+#     which pushed it past Kaggle's script size limit; .env is gitignored and also excluded)
 #   - data/samples PDFs, as dataset mira-samples, uploaded once. Delete it on Kaggle
 #     to re-upload after changing the PDFs.
 # Qdrant runs on the Kaggle VM for every mode, so no credentials ever leave this machine.
@@ -55,7 +56,7 @@ if ! kaggle datasets status "$SAMPLES" >/dev/null 2>&1; then
 fi
 
 # Kernel: code tarball (base64) + runner. Results go to /kaggle/working, the kernel's output.
-git ls-files -co --exclude-standard | grep -vx '.env' | tar czf "$tmp/code.tgz" -T -
+git ls-files -co --exclude-standard | grep -vxE '\.env|docs/.*|data/eval/generation_.*' | tar czf "$tmp/code.tgz" -T -
 mkdir "$tmp/kernel"
 {
   python3 -c 'import sys; print("MODE, SUBSETS, CMD, TESTS =", repr(sys.argv[1:4])[1:-1] + ",", sys.argv[4] == "1")' \
