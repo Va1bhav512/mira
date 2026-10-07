@@ -13,7 +13,7 @@
 #                  downloaded to .cache/kaggle/<kernel-name>/), $CACHE (scratch) and Qdrant up
 #   --dataset:     mount an extra private Kaggle dataset under /kaggle/input
 #   --kernel-output: mount another kernel's output (e.g. the demo index from mira-full)
-#   Log saved to data/eval/kaggle_<mode>.log; generation answers to data/eval/generation_<subset>.jsonl.
+#   Log saved to data/eval/kaggle_<kernel>.log; generation answers to data/eval/generation_<subset>.jsonl.
 #
 # What goes to Kaggle (private):
 #   - the code, embedded in the kernel script (git ls-files minus docs and past eval outputs,
@@ -132,7 +132,7 @@ done
 
 # Log arrives as a JSON list of stream chunks
 mkdir -p data/eval
-log=data/eval/kaggle_$MODE.log
+log=data/eval/kaggle_$N.log  # per kernel, so one run mode can't overwrite another's log
 kaggle kernels logs "$KERNEL" | python3 -c 'import json,sys; print("".join(c["data"] for c in json.load(sys.stdin)), end="")' > "$log"
 echo "Saved $log"
 if [[ $MODE == vidore ]]; then

@@ -216,7 +216,7 @@ kaggle quota                                              # GPU hours left this 
 ```
 
 Code travels inside the kernel; only `data/samples` goes up, once, as a private dataset. Qdrant runs
-on the VM, so no credentials leave your machine. Logs go to `data/eval/kaggle_<mode>.log`, and
+on the VM, so no credentials leave your machine. Logs go to `data/eval/kaggle_<kernel>.log`, and
 `--run` outputs to `.cache/kaggle/<kernel>/`.
 
 ### API and demo
