@@ -188,8 +188,9 @@ also localizing the evidence on the page; naive single-patch cropping clearly hu
 still win on hr, where questions are long and analytical. Latency is 15–16 s per answer on a T4 for
 both, set by the shared pixel budget.
 
-The judge was checked against my own reading of 30 answers: 83% agreement, harsh on terse correct
-answers ("Yes."), lenient on fluent generic ones. Paired comparisons are more trustworthy than the
+A second model (Claude) re-graded 30 judged answers and agreed on 83%; the judge was harsh on
+terse correct answers ("Yes."), lenient on fluent generic ones. That is LLM–LLM agreement; a human
+check of a sample is still to do. Paired comparisons are more trustworthy than the
 absolute scores.
 
 ### 5.4 Demo
@@ -204,7 +205,7 @@ strategy. It runs on a Kaggle T4 notebook with a public share link
 
 - **The custom set is small and self-labelled.** 47 queries written from the PDFs and treated as
   ground truth; a human check of the labels is still pending. Adaptive vs fixed there is p = 0.10.
-- **The judge is a 7B model**, validated only against one reviewer on 30 answers.
+- **The judge is a 7B model**, checked only against another LLM on 30 answers, not against human grades.
 - **Three of eight V3 subsets**, first 60 queries for generation; crop parameters tuned on one of them.
 - **Cropping loses on large-zone pages** (slides); there is no page-vs-crop fallback yet.
 - **Exact MaxSim scans every page** — fine at a few thousand pages, needs HNSW or a two-stage

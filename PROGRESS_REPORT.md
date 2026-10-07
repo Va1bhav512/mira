@@ -60,7 +60,7 @@ Report material: [docs/REPORT.md](docs/REPORT.md). Result tables:
 ## Open items
 
 - **Hand-check the custom labels** (47 queries; written from the PDFs and treated as true so far).
-- **Human-grade a sample of answers** to calibrate the judge (my check: 25 / 30 agreement).
+- **Human-grade a sample of answers** to calibrate the judge (an LLM–LLM check agreed on 25 / 30).
 - Fusion: data-dependent default weight or a learned router (tune on the custom set, test on V3).
 - Cropping: whole-page fallback when the heat is spread out (slides).
 

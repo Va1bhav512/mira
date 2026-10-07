@@ -2,8 +2,8 @@
 
 Final run 2026-10-07 on a Kaggle T4, one session (~4.5 GPU-h):
 `scripts/test_kaggle.sh --dataset <you>/mira-custom-embeddings --run 'bash scripts/kaggle_full_eval.sh' mira-full`.
-Full log: `data/eval/kaggle_mira-full.log` (gitignored; the per-query outputs are in the kernel
-output, downloaded to `.cache/kaggle/mira-full/`).
+Full log: `data/eval/kaggle_mira-full.log` (gitignored). Every generated answer, with its
+evidence boxes, timings and the judge's verdict and reason: `data/eval/generation_<subset>.jsonl`.
 
 **Setup**
 - Subsets (English queries only): `hr` (1,110 pages, 318 queries), `computer_science` (1,360 pages,
@@ -140,8 +140,9 @@ Paired bootstrap on judge score, strategy − page (same queries):
 
 ### How far to trust the judge
 
-One model grading another, so it's a proxy, not ground truth. A check against my own reading of
-30 random judged answers (10 per subset, mixed strategies) agreed on 25 (83%). The 5
+One model grading another, so it's a proxy, not ground truth. A second model (Claude) re-graded
+30 random judged answers (10 per subset, mixed strategies) and agreed on 25 (83%). This is
+LLM–LLM agreement, not human validation. The 5
 disagreements had a pattern:
 - **Too harsh on terse correct answers:** "Yes." to a yes/no question and "Since 2014" for "how
   many years by 2024" were marked incorrect.
