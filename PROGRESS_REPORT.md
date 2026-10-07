@@ -35,7 +35,7 @@ Report material: [docs/REPORT.md](docs/REPORT.md). Result tables:
 
 | Question | Answer |
 |---|---|
-| Does fusion beat either channel? | **Custom set: yes.** adaptive nDCG@10 0.844 vs visual 0.801, BM25 0.751. **ViDoRe: no**, visual-only is best (e.g. hr nDCG@5 0.576 vs 0.558). |
+| Does fusion beat either channel? | **Custom set: yes.** adaptive nDCG@10 0.844 vs visual 0.801, BM25 0.751. **ViDoRe: not at 1:1**; visual-only beats it (e.g. hr nDCG@5 0.576 vs 0.562), though a 4:1 visual weight edges visual-only on 2 of 3 subsets. |
 | Does adaptive beat fixed fusion? | Custom: +0.020 (p = 0.10). ViDoRe: −0.002 to −0.005 (significant only on hr). |
 | Does cropping find the evidence? | Yes after the ink-mask fix: zone F1 0.483 / 0.408 vs whole page 0.358 / 0.303 (hr / cs). Not on slide decks (pharmaceuticals: page 0.672 vs 0.486). |
 | Do crops hurt answers? | Heatmap crops ≈ whole pages (pooled −0.033, p = 0.29); single-patch crops clearly hurt (−0.194, p < 0.001). |
