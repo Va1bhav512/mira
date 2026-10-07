@@ -127,9 +127,9 @@ Render Pages        Visual Index        Text Index
 | 2 | Visual indexing | ColQwen embeddings, Qdrant setup | ✅ Complete (verified on Colab T4) |
 | 3 | Text indexing | BM25 implementation, native text pipeline | ✅ Complete |
 | 4 | Retrieval core | MaxSim, RRF, query-adaptive fusion | ✅ Built and evaluated ([results](data/eval/results.md)) |
-| 5 | Evidence cropping | Heatmaps, spatial aggregation, hi-res crop | ✅ Built, GPU-verified; crops untuned ([V3 results](data/eval/vidore_results.md)) |
-| 6 | Generation | VLM serving, citations, API | 🔄 Answers + citations built, GPU-verified; API not built; correctness judge pending |
-| 7 | Evaluation | Custom ablation ✅; ViDoRe V3 hr + computer_science ✅ ([results](data/eval/vidore_results.md)) | 🔄 In progress |
+| 5 | Evidence cropping | Heatmaps, spatial aggregation, hi-res crop | ✅ Built and evaluated; tuned on V3 hr ([V3 results](data/eval/vidore_results.md)) |
+| 6 | Generation | VLM serving, citations, API | ✅ Answers with region citations; FastAPI + Gradio demo |
+| 7 | Evaluation | Custom ablation; ViDoRe V3 hr, computer_science, pharmaceuticals; LLM judge | ✅ Complete ([report](docs/REPORT.md)) |
 
 ---
 
@@ -265,9 +265,10 @@ mira/
 │   │   ├── ocr.py        # OCR fallback
 │   │   └── pipeline.py   # Unified processing
 │   ├── retrieval/        # Phase 2-4: Visual + text indexing
-│   ├── grounding/        # Phase 5: Evidence cropping
-│   ├── generation/       # Phase 6: VLM serving
-│   └── evaluation/       # Phase 7: Benchmarks
+│   ├── evidence/         # Phase 5: Evidence cropping
+│   ├── generation/       # Phase 6: VLM answers + citations
+│   ├── evaluation/       # Phase 7: Metrics, ViDoRe loaders, answer judge
+│   └── serve.py          # API + Gradio demo
 ├── tests/
 │   └── test_pdf/         # PDF module tests
 ├── examples/
