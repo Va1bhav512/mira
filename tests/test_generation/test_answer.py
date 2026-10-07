@@ -13,6 +13,11 @@ def test_parse_reply_json_and_unknown_ids():
     assert parse_reply(reply, ["E1", "E2"]) == ("3.3 V", ["E2"])
 
 
+def test_parse_reply_salvages_truncated_json():
+    reply = '```json\n{"evidence_ids": ["E1", "E9"], "answer": "Line one\nsays \\"hi\\'
+    assert parse_reply(reply, ["E1", "E2"]) == ('Line one\nsays "hi …', ["E1"])
+
+
 def test_parse_reply_falls_back_to_raw_text():
     assert parse_reply("The supply is 3.3 V.", ["E1"]) == ("The supply is 3.3 V.", [])
     assert parse_reply('{"answer": 3}', ["E1"]) == ('{"answer": 3}', [])

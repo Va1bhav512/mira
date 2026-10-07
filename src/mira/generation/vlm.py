@@ -52,6 +52,15 @@ def parse_reply(reply: str, known_ids: List[str]) -> Tuple[str, List[str]]:
         data = json.loads(match.group()) if match else None
     except json.JSONDecodeError:
         data = None
+    if not isinstance(data, dict):
+        # Cut off at max_new_tokens (~3% of eval replies): keep the ids and the answer so far
+        cut = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)', reply, re.DOTALL)
+        if cut:
+            try:
+                text = json.loads(f'"{cut.group(1).rstrip(chr(92))}"', strict=False)
+            except json.JSONDecodeError:
+                text = cut.group(1)
+            data = {"answer": text + " …", "evidence_ids": re.findall(r'"(E\d+)"', reply[: cut.start()])}
     if not isinstance(data, dict) or not isinstance(data.get("answer"), str):
         return reply.strip(), []
     ids = data.get("evidence_ids")
