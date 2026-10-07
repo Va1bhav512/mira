@@ -75,12 +75,12 @@ class QdrantMultivectorStore:
             api_key = None
             print("Using local Qdrant at localhost:6333")
         
-        # Initialize client
+        # Exact MaxSim scans every page; the 5 s client default timed out on a busy Kaggle VM
         if api_key:
-            self.client = QdrantClient(url=url, api_key=api_key)
+            self.client = QdrantClient(url=url, api_key=api_key, timeout=60)
             print(f"Connected to Qdrant cloud: {url}")
         else:
-            self.client = QdrantClient(url=url)
+            self.client = QdrantClient(url=url, timeout=60)
     
     def create_collection(self, exist_ok: bool = True):
         """
