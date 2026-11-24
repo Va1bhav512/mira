@@ -29,11 +29,16 @@ if ! python -c "import mira.serve" 2>/dev/null; then
   pip uninstall -q -y torchao  # transformers 5 refuses old torchao
 fi
 
+# Pinned: v1.20+ needs glibc 2.43, newer than Kaggle's image, and crashes on start
+QDRANT_VERSION=v1.19.2
 if ! curl -sf localhost:6333/readyz >/dev/null; then
   mkdir -p "$CACHE/qdrant-bin"
-  [[ -x $CACHE/qdrant-bin/qdrant ]] || curl -sL https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-unknown-linux-gnu.tar.gz | tar xz -C "$CACHE/qdrant-bin"
+  [[ -x $CACHE/qdrant-bin/qdrant ]] || curl -sfL "https://github.com/qdrant/qdrant/releases/download/$QDRANT_VERSION/qdrant-x86_64-unknown-linux-gnu.tar.gz" | tar xz -C "$CACHE/qdrant-bin"
   QDRANT__STORAGE__STORAGE_PATH="$CACHE/qdrant" nohup "$CACHE/qdrant-bin/qdrant" > "$CACHE/qdrant.log" 2>&1 &
   for _ in $(seq 60); do curl -sf localhost:6333/readyz >/dev/null && break; sleep 1; done
+  if ! curl -sf localhost:6333/readyz >/dev/null; then
+    echo "Qdrant did not start; its log:" >&2; cat "$CACHE/qdrant.log" >&2; exit 1
+  fi
 fi
 if ! curl -sf localhost:6333/collections/mira_pages >/dev/null || [[ ! -e $bm25/pages.jsonl ]]; then
   [[ -d $CACHE/embeddings ]] || cp -r "$emb" "$CACHE/embeddings"
